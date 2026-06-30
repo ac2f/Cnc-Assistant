@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cnc-assistant"
+version = "1.0.0"
+description = "CNC tabaka kesimi icin DXF baslangic-noktasi optimizasyonu, gereksiz node temizligi, riskli parca uyarisi ve G-Code blok siralama araci"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Cnc-Assistant" }]
+keywords = ["cnc", "dxf", "gcode", "cam", "nesting", "artcam", "lead-in"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "ezdxf>=1.1,<2.0",
+]
+
+[project.optional-dependencies]
+preview = ["matplotlib>=3.5"]
+dev = ["pytest>=7.0", "matplotlib>=3.5"]
+
+[project.scripts]
+cnc-assistant = "cnc_assistant.cli:main"
+
+[tool.setuptools]
+packages = ["cnc_assistant"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

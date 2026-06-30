@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Arac ciktilari (uretilen dosyalar versiyonlanmaz)
+*_optimized.dxf
+*_reordered.tap
+*_oncesi_sonrasi.png
+*_sira_onizleme.png
+*_onizleme.png
+
+# Ornek uretici ciktilari
+examples/ornek_tabaka.dxf
+examples/ornek_kesim.tap
+
+# Isletim sistemi
+.DS_Store
+Thumbs.db

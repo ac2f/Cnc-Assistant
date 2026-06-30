@@ -1,0 +1,5 @@
+# Zorunlu bagimliliklar
+ezdxf>=1.1,<2.0        # DXF okuma/yazma
+
+# Istege bagli (onizleme/gorsel uretimi icin)
+matplotlib>=3.5        # ONCESI/SONRASI ve G-Code sira PNG onizlemeleri
