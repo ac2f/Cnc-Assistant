@@ -331,32 +331,63 @@ def adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani):
 # Onizleme icin: her kapali vektorun (baslangic_noktasi, [kontur_noktalari])
 # ----------------------------------------------------------------------
 
-def optimize_ve_kaydet(giris, cikti, opts, alan_orani=0.10, boyut_orani=0.50):
-    """Bir DXF'i optimize edip `cikti` yoluna kaydeder. Konsola log basar ve
-    onizleme/istatistik icin toplu bir sozluk doner (oncesi/sonrasi kontur +
-    baslangic noktalari, riskli parcalar, dogrulama sonucu)."""
+def _metrikler(doc):
+    """Bir dokumanin (toplam cevre, bbox) metriklerini bellek uzerinden doner."""
+    box = _ezbbox.extents(doc.modelspace())
+    bb = ((box.extmin.x, box.extmin.y, box.extmax.x, box.extmax.y)
+          if box.has_data else None)
+    return _toplam_yol_uzunlugu(doc), bb
+
+
+def _metrik_dogrula(la, ba, lb, bb):
+    if ba and bb:
+        for a, b in zip(ba, bb):
+            if abs(a - b) > 1e-6:
+                return False
+    if la > 0 and abs(la - lb) / la > 1e-6:
+        return False
+    return True
+
+
+def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
+    """DXF'i bellek uzerinde optimize eder (DISK'e YAZMAZ). Onizleme/istatistik
+    ve butunluk (bbox+cevre) dogrulamasi bellek uzerinden yapilir. Donen sozluk
+    `doc` nesnesini icerir; kaydetmek isteyen taraf `doc.saveas(...)` cagirir."""
     doc = ezdxf.readfile(giris)
     msp = doc.modelspace()
     oncesi = baslangic_noktalari_ve_konturlar(doc)
+    la, ba = _metrikler(doc)
     stats = adim1_baslangic_optimizasyonu(msp, opts)
     print("-" * 62)
     riskli = adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani)
-    doc.saveas(cikti)
-    print("-" * 62)
-    dogrulama = butunluk_dogrula(giris, cikti)
-    print(f"[Adim 1] Cikti dosyasi: {cikti}")
-    sonrasi_doc = ezdxf.readfile(cikti)
-    sonrasi = baslangic_noktalari_ve_konturlar(sonrasi_doc)
+    lb, bb = _metrikler(doc)
+    dogrulama = _metrik_dogrula(la, ba, lb, bb)
+    if dogrulama:
+        print(f"[Dogrulama] OK - bbox ve toplam cevre ({lb:.4f}) birebir korundu.")
+    else:
+        print("[Dogrulama] UYARI! Geometrik fark tespit edildi.")
+    sonrasi = baslangic_noktalari_ve_konturlar(doc)
     return {
-        "giris": giris, "cikti": cikti,
+        "giris": giris, "doc": doc,
         "kaydirilan": stats["kaydirilan"],
         "silinen_node": stats["silinen_node"],
         "cember": stats["cember"],
         "riskli": riskli,
         "riskli_handlelar": {h for _, h, _, _, _ in riskli},
         "oncesi": oncesi, "sonrasi": sonrasi,
-        "dogrulama": dogrulama,
+        "dogrulama": dogrulama, "cevre": lb,
     }
+
+
+def optimize_ve_kaydet(giris, cikti, opts, alan_orani=0.10, boyut_orani=0.50):
+    """optimize_doc + diske kaydet + kaydedilen dosyayi yeniden acip DOGRULA."""
+    sonuc = optimize_doc(giris, opts, alan_orani, boyut_orani)
+    sonuc["doc"].saveas(cikti)
+    print("-" * 62)
+    sonuc["dogrulama"] = butunluk_dogrula(giris, cikti)
+    print(f"[Adim 1] Cikti dosyasi: {cikti}")
+    sonuc["cikti"] = cikti
+    return sonuc
 
 
 def baslangic_noktalari_ve_konturlar(doc):

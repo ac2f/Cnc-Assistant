@@ -149,25 +149,27 @@ Ayni derinlik seviyesindeki bloklar arasinda travel stratejisi:
 python main.py --web           # http://127.0.0.1:8000 acilir
 ```
 
-Uc sekme:
+Arayuz sade, modern bir tasarima sahiptir (acik/koyu tema otomatik; sag ustteki
+◐ ile degistirilebilir) ve saf HTML/JS'tir (SVG ile cizim) — onizlemeler
+**anlik** ve tarayici tarafinda uretilir.
 
-- **DXF:** dosya sec, parametreleri (baslangic yatay/dikey, node toleransi,
-  node temizligi ac/kapa) ayarla, **ONCESI/SONRASI** baslangic noktalarini
-  **anlik** SVG olarak gor. "Onizle + Kaydet" optimize DXF'i yazar.
-- **G-Code:** dosya yukle; numarali blok listesi + canli sira onizlemesi
-  (numara = kesim sirasi, ok = tasima yolu) gelir.
-  - **Elle siralama:** bloklari **surukle-birak** ile tasi, ya da `59 60`
-    yazip iki blogun yerini degistir.
-  - **Auto / Serpantin / Engel** butonlari ile otomatik sirala (hepsi icerme
-    kuralini korur).
-  - **Geri / Ileri** (undo/redo), **Canli onizleme** toggle'i (her degisiklikte
-    guncelle ac/kapa), **Goster** (tek seferlik), **Kaydet**.
-  - Icerme ihlalleri kirmizi vurgulanir ve alt bilgide raporlanir.
-- **Proje / Klasor:** bir klasor + proje adi ver, "Klasoru Otomatik Isle" ile
-  icindeki her sey ayri dizinlere islenir.
-
-Arayuz saf HTML/JS'tir (SVG ile cizim); onizlemeler **anlik** ve tarayici
-tarafinda uretilir.
+- **Dosya gezgini (sol kenar):** klasorler arasinda gezin (ust yol cubugu /
+  "Ev" / "Proje" kisayollari), DXF/G-Code dosyalarina tiklayarak acin.
+  Elle yol yazmaya gerek yok.
+- **Cok sekmeli calisma:** actiginiz her dosya ust tarafta **ayri bir sekme**
+  olur; aralarinda gecis yapabilirsiniz. "Klasordeki tum DXF'leri ac" ile bir
+  klasordeki tum DXF'ler tek tusla ayri sekmelerde acilir.
+- **DXF sekmesi:** parametreleri (baslangic yatay/dikey, node toleransi, node
+  temizligi ac/kapa) ayarla → **ONCESI/SONRASI** baslangic noktalarini **anlik**
+  gor. "Yeniden Isle" onizler (diske yazmaz), "Optimize DXF'i Kaydet" yazar.
+- **G-Code sekmesi:** numarali blok listesi + canli sira onizlemesi
+  (numara = kesim sirasi, ok = tasima yolu).
+  - **Elle siralama:** bloklari **surukle-birak** ile tasi, ya da `59 60` yazip
+    iki blogun yerini degistir.
+  - **Auto / Serpantin / Engel** ile otomatik sirala (hepsi icerme kuralini korur).
+  - **↶ / ↷** (geri al / yinele), **Canli onizleme** toggle, **Goster**, **Kaydet**.
+  - Icerme ihlalleri kirmizi vurgulanir ve raporlanir.
+- **Toplu Isle (sag ust):** secili klasordeki her sey ayri dizinlere islenir.
 
 ---
 

@@ -32,8 +32,17 @@ from . import project as P
 
 WEB_DIZIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
-# Yuklenen G-Code programlari (bellek ici durum)
+# Yuklenen G-Code programlari ve optimize DXF dokumanlari (bellek ici durum)
 _DURUM = {}
+_DXF_DOC = {}
+
+
+def _boyut_str(n):
+    for birim in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f} {birim}" if birim == "B" else f"{n:.1f} {birim}"
+        n /= 1024
+    return f"{n:.1f} TB"
 
 
 # ----------------------------------------------------------------------
@@ -99,34 +108,82 @@ def api_scan(veri):
     return {"klasor": os.path.abspath(klasor), "dosyalar": dosyalar}
 
 
-def api_dxf_onizle(veri):
-    yol = veri["yol"]
-    if not os.path.isfile(yol):
-        return {"hata": f"Dosya yok: {yol}"}
-    opts = {
+def api_gozat(veri):
+    """Sunucu tarafinda klasor gezme: alt klasorler + DXF/G-Code dosyalari."""
+    yol = veri.get("yol") or os.getcwd()
+    yol = os.path.abspath(os.path.expanduser(yol))
+    if os.path.isfile(yol):
+        yol = os.path.dirname(yol)
+    if not os.path.isdir(yol):
+        return {"hata": f"Klasor yok: {yol}"}
+    klasorler, dosyalar = [], []
+    try:
+        for ad in sorted(os.listdir(yol), key=str.lower):
+            if ad.startswith("."):
+                continue
+            tam = os.path.join(yol, ad)
+            try:
+                if os.path.isdir(tam):
+                    klasorler.append({"ad": ad, "yol": tam})
+                elif os.path.isfile(tam):
+                    uz = os.path.splitext(ad)[1].lower()
+                    tur = ("dxf" if uz == ".dxf"
+                           else "gcode" if uz in P.GCODE_UZANTILAR else None)
+                    if tur:
+                        dosyalar.append({"ad": ad, "yol": tam, "tur": tur,
+                                         "boyut": _boyut_str(os.path.getsize(tam))})
+            except OSError:
+                continue
+    except PermissionError:
+        return {"hata": f"Erisim reddedildi: {yol}"}
+    ust = os.path.dirname(yol)
+    return {"yol": yol, "ust": ust if ust != yol else None,
+            "ev": os.path.expanduser("~"), "cwd": os.getcwd(),
+            "klasorler": klasorler, "dosyalar": dosyalar}
+
+
+def _dxf_opts(veri):
+    return {
         "node_temizle": veri.get("node_temizle", True),
         "node_tol": float(veri.get("node_tol", 1e-6)),
         "bas_x_orani": float(veri.get("bas_x_orani", 0.75)),
         "serit_y_orani": float(veri.get("serit_y_orani", 0.5)),
     }
-    kok, _ = os.path.splitext(yol)
-    cikti = veri.get("cikti") or f"{kok}_optimized.dxf"
-    sonuc = D.optimize_ve_kaydet(yol, cikti, opts,
-                                 float(veri.get("alan_orani", 0.10)),
-                                 float(veri.get("boyut_orani", 0.50)))
+
+
+def api_dxf_onizle(veri):
+    """DXF'i bellek uzerinde optimize eder (diske YAZMAZ); onizleme doner."""
+    yol = veri["yol"]
+    if not os.path.isfile(yol):
+        return {"hata": f"Dosya yok: {yol}"}
+    sonuc = D.optimize_doc(yol, _dxf_opts(veri),
+                           float(veri.get("alan_orani", 0.10)),
+                           float(veri.get("boyut_orani", 0.50)))
+    _DXF_DOC[yol] = sonuc["doc"]
     riskli_kutu = [{"merkez": m, "w": w, "h": h}
                    for _, _, m, w, h in sonuc["riskli"]]
     return {
-        "cikti": cikti,
         "kaydirilan": sonuc["kaydirilan"],
         "silinen_node": sonuc["silinen_node"],
         "cember": sonuc["cember"],
         "dogrulama": sonuc["dogrulama"],
+        "cevre": sonuc["cevre"],
         "oncesi": [_varlik_json(v) for v in sonuc["oncesi"]],
         "sonrasi": [_varlik_json(v) for v in sonuc["sonrasi"]],
         "riskli_handlelar": list(sonuc["riskli_handlelar"]),
         "riskli": riskli_kutu,
     }
+
+
+def api_dxf_kaydet(veri):
+    """Onizlenen (bellekteki) optimize DXF'i diske kaydeder."""
+    yol = veri["yol"]
+    if yol not in _DXF_DOC:
+        return {"hata": "Once onizleyin."}
+    kok, _ = os.path.splitext(yol)
+    cikti = veri.get("cikti") or f"{kok}_optimized.dxf"
+    _DXF_DOC[yol].saveas(cikti)
+    return {"cikti": cikti}
 
 
 def api_gcode_yukle(veri):
@@ -188,7 +245,9 @@ def api_proje_klasor(veri):
 
 API = {
     "/api/scan": api_scan,
+    "/api/gozat": api_gozat,
     "/api/dxf/onizle": api_dxf_onizle,
+    "/api/dxf/kaydet": api_dxf_kaydet,
     "/api/gcode/yukle": api_gcode_yukle,
     "/api/gcode/sirala": api_gcode_sirala,
     "/api/gcode/dogrula": api_gcode_dogrula,

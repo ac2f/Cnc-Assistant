@@ -4,196 +4,84 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CNC-Assistant</title>
-<style>
-  :root{
-    --bg:#0f1420; --panel:#171d2b; --panel2:#1e2740; --line:#2a3550;
-    --fg:#e6ebf5; --mut:#8b97b3; --acc:#3b82f6; --ok:#22c55e; --warn:#ef4444;
-    --amber:#f59e0b; --violet:#a855f7;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;
-       background:var(--bg);color:var(--fg);font-size:14px}
-  header{display:flex;align-items:center;gap:16px;padding:10px 18px;
-         background:var(--panel);border-bottom:1px solid var(--line)}
-  header h1{font-size:16px;margin:0;font-weight:700;letter-spacing:.3px}
-  header .sub{color:var(--mut);font-size:12px}
-  .tabs{display:flex;gap:6px;margin-left:auto}
-  .tab{padding:7px 14px;border-radius:8px;cursor:pointer;color:var(--mut);
-       border:1px solid transparent}
-  .tab.aktif{background:var(--panel2);color:var(--fg);border-color:var(--line)}
-  main{padding:16px;max-width:1400px;margin:0 auto}
-  .kart{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-        padding:16px;margin-bottom:16px}
-  .satir{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
-  label{display:block;font-size:12px;color:var(--mut);margin-bottom:4px}
-  input[type=text],input[type=number]{background:var(--panel2);color:var(--fg);
-       border:1px solid var(--line);border-radius:8px;padding:8px 10px;
-       font-size:13px;min-width:120px}
-  input[type=text].genis{min-width:360px}
-  button{background:var(--acc);color:#fff;border:0;border-radius:8px;
-         padding:8px 14px;cursor:pointer;font-size:13px;font-weight:600}
-  button.gri{background:var(--panel2);border:1px solid var(--line);color:var(--fg)}
-  button.gri:hover{border-color:var(--acc)}
-  button:disabled{opacity:.5;cursor:not-allowed}
-  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-  @media(max-width:900px){.grid2{grid-template-columns:1fr}}
-  svg{width:100%;height:420px;background:#0b0f18;border-radius:10px;
-      border:1px solid var(--line)}
-  .svgbaslik{font-size:12px;color:var(--mut);margin-bottom:6px}
-  .gizli{display:none}
-  .durum{font-size:12px;color:var(--mut);margin-top:8px;white-space:pre-wrap}
-  .rozet{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px;
-         background:var(--panel2);border:1px solid var(--line)}
-  .dosyalar{max-height:200px;overflow:auto;border:1px solid var(--line);
-            border-radius:8px}
-  .dosyalar .d{padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--line);
-       display:flex;gap:8px;align-items:center}
-  .dosyalar .d:hover{background:var(--panel2)}
-  .cols{display:grid;grid-template-columns:320px 1fr;gap:16px}
-  @media(max-width:900px){.cols{grid-template-columns:1fr}}
-  .liste{max-height:460px;overflow:auto;border:1px solid var(--line);
-         border-radius:10px}
-  .blok{display:flex;gap:10px;align-items:center;padding:8px 10px;
-        border-bottom:1px solid var(--line);cursor:grab;background:var(--panel)}
-  .blok:hover{background:var(--panel2)}
-  .blok.ihlal{background:rgba(239,68,68,.15)}
-  .blok .no{width:30px;height:30px;border-radius:50%;display:grid;
-       place-items:center;font-weight:700;background:var(--panel2);
-       border:1px solid var(--line);flex:none}
-  .blok .xy{color:var(--mut);font-size:12px}
-  .araclar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
-  .toggle{display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--fg)}
-  .kv{color:var(--mut)} .kv b{color:var(--fg)}
-  .slider{display:flex;flex-direction:column}
-  .slider .val{color:var(--fg);font-size:12px}
-  .hata{color:var(--warn)}
-  .ok{color:var(--ok)}
-</style>
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header>
-  <h1>CNC-Assistant</h1>
-  <span class="sub">DXF baslangic optimizasyonu · node temizligi · G-Code siralama</span>
-  <div class="tabs">
-    <div class="tab aktif" data-tab="dxf">DXF</div>
-    <div class="tab" data-tab="gcode">G-Code</div>
-    <div class="tab" data-tab="proje">Proje / Klasor</div>
+
+<header class="ust">
+  <div class="marka">
+    <div class="logo">C</div>
+    <div>
+      <div class="ad">CNC-Assistant</div>
+      <div class="alt">Baslangic optimizasyonu · node temizligi · G-Code siralama</div>
+    </div>
+  </div>
+  <div class="ust-sag">
+    <button class="dugme hayalet" id="topluBtn" title="Bu klasordeki tum dosyalari ayri dizinlere isle">Toplu Isle</button>
+    <button class="dugme hayalet ikon" id="temaBtn" title="Acik/koyu tema">&#9689;</button>
   </div>
 </header>
-<main>
 
-  <!-- ORTAK: klasor tarama -->
-  <div class="kart">
-    <div class="satir">
-      <div style="flex:1">
-        <label>Klasor yolu (icindeki DXF/G-Code dosyalari listelenir)</label>
-        <input type="text" id="klasor" class="genis" placeholder="/yol/klasor veya .">
+<div class="govde">
+
+  <!-- KENAR: dosya gezgini -->
+  <aside class="kenar">
+    <div class="kenar-baslik">
+      <span>Dosyalar</span>
+      <div class="kisayol">
+        <button class="mini" data-git="ev" title="Ev dizini">Ev</button>
+        <button class="mini" data-git="cwd" title="Calisma dizini">Proje</button>
       </div>
-      <button class="gri" onclick="tara()">Tara</button>
     </div>
-    <div id="dosyaListe" class="dosyalar gizli" style="margin-top:10px"></div>
+    <div class="yol-cubugu" id="yolCubugu"></div>
+    <div class="gezgin" id="gezgin"></div>
+    <div class="kenar-alt">
+      <button class="dugme genis" id="tumDxfBtn">Klasordeki tum DXF'leri ac</button>
+    </div>
+  </aside>
+
+  <!-- ANA -->
+  <main class="ana">
+    <div class="sekmeler" id="sekmeler"></div>
+    <div class="icerik" id="icerik">
+      <!-- bos durum -->
+      <div class="bos" id="bosDurum">
+        <div class="bos-ikon">◇</div>
+        <h2>Bir dosya secin</h2>
+        <p>Soldaki gezginden bir <b>.dxf</b> veya <b>G-Code</b> dosyasina tiklayin.
+           Birden fazla dosya acabilir, sekmeler arasinda gecis yapabilirsiniz.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<!-- Toplu isle penceresi -->
+<div class="perde gizli" id="perde">
+  <div class="pencere">
+    <h3>Klasoru Toplu Isle</h3>
+    <p class="ipuc">Secili klasordeki tum DXF ve G-Code dosyalari, ayri
+       dizinlere (01_girdi · 02_dxf_optimized · 03_gcode_reordered · 04_onizleme)
+       islenir.</p>
+    <label>Klasor</label>
+    <input type="text" id="pKlasor" class="alan">
+    <div class="ikili">
+      <div><label>Proje adi</label><input type="text" id="pAd" class="alan" value="proje"></div>
+      <div><label>G-Code mod</label>
+        <select id="pMod" class="alan">
+          <option value="sol-alt">sol-alt → sag-ust</option>
+          <option value="serpantin">serpantin</option>
+          <option value="engel">engel-farkindalik</option>
+        </select></div>
+    </div>
+    <label class="satirici"><input type="checkbox" id="pOnizleme" checked> PNG onizleme uret</label>
+    <div class="pencere-alt">
+      <button class="dugme hayalet" onclick="perdeKapat()">Vazgec</button>
+      <button class="dugme" onclick="topluIsle()">Isle</button>
+    </div>
+    <div class="durum" id="pDurum"></div>
   </div>
+</div>
 
-  <!-- DXF -->
-  <section id="tab-dxf">
-    <div class="kart">
-      <div class="satir">
-        <div style="flex:1"><label>DXF dosya yolu</label>
-          <input type="text" id="dxfYol" class="genis" placeholder="tabaka.dxf"></div>
-        <div class="slider"><label>Baslangic yatay (0.5 orta → 1.0 sag)</label>
-          <input type="range" id="basX" min="0.5" max="1" step="0.05" value="0.75"
-                 oninput="basXv.textContent=this.value">
-          <span class="val">deger: <b id="basXv">0.75</b></span></div>
-        <div class="slider"><label>Serit dikey (sag kenar)</label>
-          <input type="range" id="seritY" min="0" max="1" step="0.05" value="0.5"
-                 oninput="seritYv.textContent=this.value">
-          <span class="val">deger: <b id="seritYv">0.5</b></span></div>
-        <div><label>Node tol.</label>
-          <input type="number" id="nodeTol" value="0.000001" step="0.000001" style="width:120px"></div>
-        <div><label><input type="checkbox" id="nodeTemiz" checked> Node temizligi</label></div>
-        <button onclick="dxfOnizle()">Onizle + Kaydet</button>
-      </div>
-      <div id="dxfDurum" class="durum"></div>
-    </div>
-    <div class="kart">
-      <div class="grid2">
-        <div><div class="svgbaslik">ONCESI — orijinal baslangic noktalari</div>
-          <svg id="svgOncesi"></svg></div>
-        <div><div class="svgbaslik">SONRASI — optimize baslangic (yesil) · riskli (kirmizi)</div>
-          <svg id="svgSonrasi"></svg></div>
-      </div>
-    </div>
-  </section>
-
-  <!-- GCODE -->
-  <section id="tab-gcode" class="gizli">
-    <div class="kart">
-      <div class="satir">
-        <div style="flex:1"><label>G-Code dosya yolu</label>
-          <input type="text" id="gcYol" class="genis" placeholder="kesim.tap"></div>
-        <button onclick="gcYukle()">Yukle</button>
-      </div>
-      <div id="gcDurum" class="durum"></div>
-    </div>
-    <div class="kart" id="gcAlan" style="display:none">
-      <div class="araclar">
-        <button class="gri" onclick="gcSirala('sol-alt')">Auto (sol-alt→sag-ust)</button>
-        <button class="gri" onclick="gcSirala('serpantin')">Serpantin</button>
-        <button class="gri" onclick="gcSirala('engel')">Engel-farkindalik</button>
-        <span style="width:1px;height:22px;background:var(--line)"></span>
-        <input type="text" id="swapGiris" placeholder="59 60" style="width:100px"
-               onkeydown="if(event.key==='Enter')swapUygula()">
-        <button class="gri" onclick="swapUygula()">Yer degistir</button>
-        <button class="gri" onclick="geriAl()">↶ Geri</button>
-        <button class="gri" onclick="ileriAl()">↷ Ileri</button>
-        <label class="toggle"><input type="checkbox" id="canli" checked
-               onchange="if(this.checked)ciz()"> Canli onizleme</label>
-        <button class="gri" onclick="ciz(true)">Goster</button>
-        <button onclick="gcKaydet()">Kaydet (.tap)</button>
-      </div>
-      <div class="cols">
-        <div>
-          <div class="svgbaslik">Kesim sirasi (surukleyerek tasi)</div>
-          <div id="blokListe" class="liste"></div>
-        </div>
-        <div>
-          <div class="svgbaslik">Sira onizleme — numara = kesim sirasi, ok = tasima</div>
-          <svg id="svgGcode"></svg>
-          <div id="gcInfo" class="durum"></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- PROJE -->
-  <section id="tab-proje" class="gizli">
-    <div class="kart">
-      <div class="satir">
-        <div style="flex:1"><label>Islenecek klasor</label>
-          <input type="text" id="pKlasor" class="genis" placeholder="/yol/dxf_klasoru"></div>
-        <div><label>Proje adi</label>
-          <input type="text" id="pAd" value="proje"></div>
-        <div style="flex:1"><label>Cikti kok dizini (bos = klasor/cnc_ciktilar)</label>
-          <input type="text" id="pKok" class="genis" placeholder="(otomatik)"></div>
-      </div>
-      <div class="satir" style="margin-top:10px">
-        <div><label><input type="checkbox" id="pOnizleme" checked> PNG onizleme uret</label></div>
-        <div><label>G-Code mod</label>
-          <select id="pMod" style="background:var(--panel2);color:var(--fg);
-                  border:1px solid var(--line);border-radius:8px;padding:8px">
-            <option value="sol-alt">sol-alt→sag-ust</option>
-            <option value="serpantin">serpantin</option>
-            <option value="engel">engel-farkindalik</option>
-          </select></div>
-        <button onclick="klasorIsle()">Klasoru Otomatik Isle</button>
-      </div>
-      <div class="durum">Her sey ayri dizinlere yerlestirilir:
-        01_girdi · 02_dxf_optimized · 03_gcode_reordered · 04_onizleme</div>
-      <div id="pDurum" class="durum"></div>
-    </div>
-  </section>
-
-</main>
 <script src="/app.js"></script>
 </body>
 </html>

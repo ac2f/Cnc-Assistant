@@ -1,331 +1,408 @@
 "use strict";
-// CNC-Assistant tarayici mantigi (bagimliliksiz vanilla JS)
+// CNC-Assistant — tarayici mantigi (bagimliliksiz vanilla JS)
 
 const SVGNS = "http://www.w3.org/2000/svg";
+const IK_KLASOR = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const IK_DOSYA = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h8l6 6v14a0 0 0 0 1 0 0H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/></svg>';
 
 async function api(uc, veri) {
-  const r = await fetch(uc, {
-    method: "POST",
+  const r = await fetch(uc, { method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(veri || {}),
-  });
+    body: JSON.stringify(veri || {}) });
   return r.json();
 }
+const $ = id => document.getElementById(id);
 
-// ---- sekme gecisi ----
-document.querySelectorAll(".tab").forEach(t => {
-  t.onclick = () => {
-    document.querySelectorAll(".tab").forEach(x => x.classList.remove("aktif"));
-    t.classList.add("aktif");
-    ["dxf", "gcode", "proje"].forEach(id =>
-      document.getElementById("tab-" + id).classList.toggle("gizli",
-        id !== t.dataset.tab));
-  };
-});
+// ===================== tema =====================
+$("temaBtn").onclick = () => {
+  const kok = document.documentElement;
+  const su = kok.getAttribute("data-tema")
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  kok.setAttribute("data-tema", su === "dark" ? "light" : "dark");
+};
 
-// =====================================================================
-// SVG cizim yardimcilari
-// =====================================================================
-function svgKur(svg) { while (svg.firstChild) svg.removeChild(svg.firstChild); }
+// ===================== dosya gezgini =====================
+let GZ = { yol: null, ev: null, cwd: null };
 
-function fitDonusum(bbox, W, H, pad) {
-  const [x0, y0, x1, y1] = bbox;
-  const w = Math.max(x1 - x0, 1e-6), h = Math.max(y1 - y0, 1e-6);
-  const s = Math.min((W - 2 * pad) / w, (H - 2 * pad) / h);
-  const ox = (W - s * w) / 2, oy = (H - s * h) / 2;
-  // Y'yi ters cevir (CNC'de yukari +)
-  return (x, y) => [ox + (x - x0) * s, H - (oy + (y - y0) * s)];
-}
-
-function tumBbox(konturListesi) {
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  konturListesi.forEach(pts => pts.forEach(p => {
-    x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]);
-    x1 = Math.max(x1, p[0]); y1 = Math.max(y1, p[1]);
-  }));
-  if (!isFinite(x0)) return [0, 0, 1, 1];
-  return [x0, y0, x1, y1];
-}
-
-function ekle(svg, tip, attrs) {
-  const e = document.createElementNS(SVGNS, tip);
-  for (const k in attrs) e.setAttribute(k, attrs[k]);
-  svg.appendChild(e);
-  return e;
-}
-
-// DXF panellerini ciz
-function cizDxf(svgId, varliklar, riskliHandlelar, baslangicGoster) {
-  const svg = document.getElementById(svgId);
-  svgKur(svg);
-  const W = svg.clientWidth || 600, H = svg.clientHeight || 420;
-  const bbox = tumBbox(varliklar.map(v => v.kontur));
-  const T = fitDonusum(bbox, W, H, 24);
-  const riskliSet = new Set(riskliHandlelar || []);
-  varliklar.forEach(v => {
-    const riskli = riskliSet.has(v.handle);
-    const d = v.kontur.map((p, i) => {
-      const [px, py] = T(p[0], p[1]);
-      return (i ? "L" : "M") + px.toFixed(1) + " " + py.toFixed(1);
-    }).join(" ");
-    ekle(svg, "path", { d, fill: "none",
-      stroke: riskli ? "#ef4444" : "#5b8def",
-      "stroke-width": riskli ? 2 : 1.2 });
-    if (baslangicGoster && v.baslangic) {
-      const [px, py] = T(v.baslangic[0], v.baslangic[1]);
-      ekle(svg, "circle", { cx: px, cy: py, r: 5, fill: "#22c55e",
-        stroke: "#0b0f18", "stroke-width": 1 });
-    } else if (v.baslangic) {
-      const [px, py] = T(v.baslangic[0], v.baslangic[1]);
-      ekle(svg, "circle", { cx: px, cy: py, r: 4, fill: "#8b97b3" });
-    }
+async function gozat(yol) {
+  const s = await api("/api/gozat", { yol });
+  const g = $("gezgin");
+  if (s.hata) { g.innerHTML = `<div class="oge">${s.hata}</div>`; return; }
+  GZ = { yol: s.yol, ev: s.ev, cwd: s.cwd };
+  $("pKlasor").value = s.yol;
+  // yol cubugu (breadcrumb)
+  const yc = $("yolCubugu"); yc.innerHTML = "";
+  const parcalar = s.yol.split("/").filter(Boolean);
+  let birik = s.yol.startsWith("/") ? "" : ".";
+  const kokP = document.createElement("span"); kokP.className = "p";
+  kokP.textContent = "/"; kokP.onclick = () => gozat("/"); yc.appendChild(kokP);
+  parcalar.forEach(p => {
+    birik += "/" + p;
+    const yolu = birik;
+    const e = document.createElement("span"); e.className = "p"; e.textContent = p;
+    e.onclick = () => gozat(yolu); yc.appendChild(e);
+    yc.appendChild(document.createTextNode("›"));
   });
+  // liste
+  g.innerHTML = "";
+  if (s.ust) {
+    const u = oge(IK_KLASOR, "..", "", "klasor"); u.onclick = () => gozat(s.ust);
+    g.appendChild(u);
+  }
+  s.klasorler.forEach(k => {
+    const e = oge(IK_KLASOR, k.ad, "", "klasor"); e.onclick = () => gozat(k.yol);
+    g.appendChild(e);
+  });
+  s.dosyalar.forEach(f => {
+    const e = oge(IK_DOSYA, f.ad, `<span class="rozet">${f.tur}</span>`);
+    e.onclick = () => dosyaAc(f); g.appendChild(e);
+  });
+  if (!s.klasorler.length && !s.dosyalar.length)
+    g.innerHTML += `<div class="oge" style="color:var(--metin2)">Bu klasorde DXF/G-Code yok</div>`;
+}
+function oge(ik, isim, sag, sinif) {
+  const d = document.createElement("div");
+  d.className = "oge" + (sinif ? " " + sinif : "");
+  d.innerHTML = ik + `<span class="isim">${isim}</span>` + (sag || "");
+  return d;
+}
+document.querySelectorAll(".mini").forEach(b => b.onclick = () =>
+  gozat(b.dataset.git === "ev" ? GZ.ev : GZ.cwd));
+$("tumDxfBtn").onclick = async () => {
+  const s = await api("/api/gozat", { yol: GZ.yol });
+  (s.dosyalar || []).filter(f => f.tur === "dxf").forEach(dosyaAc);
+};
+
+// ===================== belge (sekme) yonetimi =====================
+let DOCS = [];      // {id, yol, ad, tur, durum, ...}
+let AKTIF = null;
+let sayac = 0;
+
+function dosyaAc(f) {
+  const varsa = DOCS.find(d => d.yol === f.yol);
+  if (varsa) { AKTIF = varsa.id; render(); return; }
+  const doc = { id: ++sayac, yol: f.yol, ad: f.ad, tur: f.tur, durum: "yeni" };
+  if (f.tur === "dxf")
+    doc.params = { bas_x: 0.75, serit_y: 0.5, node_tol: 1e-6, node_temiz: true };
+  DOCS.push(doc); AKTIF = doc.id; render();
+  yukle(doc);
+}
+function docKapat(id, ev) {
+  ev.stopPropagation();
+  const i = DOCS.findIndex(d => d.id === id);
+  DOCS.splice(i, 1);
+  if (AKTIF === id) AKTIF = DOCS.length ? DOCS[Math.max(0, i - 1)].id : null;
+  render();
+}
+function aktifDoc() { return DOCS.find(d => d.id === AKTIF); }
+
+async function yukle(doc) {
+  doc.durum = "yukleniyor"; render();
+  if (doc.tur === "dxf") {
+    const p = doc.params;
+    doc.veri = await api("/api/dxf/onizle", { yol: doc.yol,
+      bas_x_orani: p.bas_x, serit_y_orani: p.serit_y,
+      node_tol: p.node_tol, node_temizle: p.node_temiz });
+  } else {
+    const g = await api("/api/gcode/yukle", { yol: doc.yol });
+    doc.veri = g;
+    if (g.guvenli) doc.gc = { bloklar: g.bloklar, sira: g.onerilen_sira.slice(),
+      gecmis: [], ileri: [], canli: true };
+  }
+  doc.durum = "hazir";
+  if (AKTIF === doc.id) render();
 }
 
-// =====================================================================
-// DXF sekmesi
-// =====================================================================
-async function dxfOnizle() {
-  const yol = document.getElementById("dxfYol").value.trim();
-  if (!yol) return;
-  const durum = document.getElementById("dxfDurum");
-  durum.textContent = "Isleniyor...";
-  const veri = {
-    yol,
-    node_temizle: document.getElementById("nodeTemiz").checked,
-    node_tol: parseFloat(document.getElementById("nodeTol").value) || 1e-6,
-    bas_x_orani: parseFloat(document.getElementById("basX").value),
-    serit_y_orani: parseFloat(document.getElementById("seritY").value),
-  };
-  const s = await api("/api/dxf/onizle", veri);
-  if (s.hata) { durum.innerHTML = "<span class='hata'>" + s.hata + "</span>"; return; }
-  cizDxf("svgOncesi", s.oncesi, [], true);
-  cizDxf("svgSonrasi", s.sonrasi, s.riskli_handlelar, true);
-  durum.innerHTML =
-    `<span class='ok'>Kaydedildi:</span> ${s.cikti}\n` +
-    `Baslangici tasinan: <b>${s.kaydirilan}</b> · ` +
-    `Kaldirilan gereksiz node: <b>${s.silinen_node}</b> · ` +
-    `Cember→polyline: <b>${s.cember}</b> · ` +
-    `Riskli parca: <b>${s.riskli.length}</b> · ` +
-    `Butunluk: ${s.dogrulama ? "<span class='ok'>birebir korundu</span>"
-      : "<span class='hata'>UYARI</span>"}`;
-}
-
-// =====================================================================
-// G-Code sekmesi
-// =====================================================================
-let GC = { yol: null, bloklar: [], sira: [], gecmis: [], ileri: [] };
-
-async function gcYukle() {
-  const yol = document.getElementById("gcYol").value.trim();
-  if (!yol) return;
-  const durum = document.getElementById("gcDurum");
-  durum.textContent = "Yukleniyor...";
-  const s = await api("/api/gcode/yukle", { yol });
-  if (s.hata) { durum.innerHTML = "<span class='hata'>" + s.hata + "</span>"; return; }
-  if (!s.guvenli) {
-    durum.innerHTML = "<span class='hata'>" + s.uyarilar.join(" ") + "</span>";
-    document.getElementById("gcAlan").style.display = "none";
+// ===================== render =====================
+function render() {
+  // sekmeler
+  const sk = $("sekmeler"); sk.innerHTML = "";
+  DOCS.forEach(d => {
+    const t = document.createElement("div");
+    t.className = "sekme" + (d.id === AKTIF ? " aktif" : "");
+    t.onclick = () => { AKTIF = d.id; render(); };
+    t.innerHTML = `<span class="nokta ${d.tur}"></span>` +
+      `<span class="isim">${d.ad}</span>` +
+      `<span class="kapat">×</span>`;
+    t.querySelector(".kapat").onclick = e => docKapat(d.id, e);
+    sk.appendChild(t);
+  });
+  // icerik
+  const ic = $("icerik");
+  const doc = aktifDoc();
+  if (!doc) { ic.innerHTML = ""; ic.appendChild(bosDurum()); return; }
+  if (doc.durum !== "hazir") {
+    ic.innerHTML = `<div class="bos"><div class="yukleniyor"></div>
+      <p style="margin-top:14px">${doc.ad} isleniyor…</p></div>`;
     return;
   }
-  GC = { yol, bloklar: s.bloklar, sira: s.onerilen_sira.slice(),
-         gecmis: [], ileri: [] };
-  document.getElementById("gcAlan").style.display = "block";
-  let msg = `${s.bloklar.length} kesim blogu yuklendi. ` +
-            `Icerme-oncelikli (en icteki once) auto-sira uygulandi.`;
-  if (s.uyarilar.length) msg += "\n[Guvenlik] " + s.uyarilar.join(" ");
-  durum.textContent = msg;
-  await ciz(true);
+  ic.innerHTML = "";
+  ic.appendChild(doc.tur === "dxf" ? dxfIcerik(doc) : gcodeIcerik(doc));
+  if (doc.tur === "dxf") dxfCiz(doc);
+  else if (doc.gc) gcCiz(doc);
+}
+function bosDurum() {
+  const d = document.createElement("div"); d.className = "bos";
+  d.innerHTML = `<div class="bos-ikon">◇</div><h2>Bir dosya secin</h2>
+    <p>Soldaki gezginden bir <b>.dxf</b> veya <b>G-Code</b> dosyasina tiklayin.</p>`;
+  return d;
 }
 
-function anlikKaydet() { GC.gecmis.push(GC.sira.slice()); GC.ileri = []; }
+// ===================== DXF gorunumu =====================
+function dxfIcerik(doc) {
+  const v = doc.veri, p = doc.params;
+  const el = document.createElement("div");
+  if (v.hata) { el.innerHTML = `<div class="kart"><span class="uyari">${v.hata}</span></div>`; return el; }
+  el.innerHTML = `
+    <div class="kart">
+      <div class="arac">
+        <div class="grup"><label>Baslangic yatay (0.5 orta → 1.0 sag)</label>
+          <input type="range" min="0.5" max="1" step="0.05" value="${p.bas_x}" id="d_basx">
+          <span class="deger">deger: <b id="d_basxv">${p.bas_x}</b></span></div>
+        <div class="grup"><label>Serit dikey (sag kenar)</label>
+          <input type="range" min="0" max="1" step="0.05" value="${p.serit_y}" id="d_sery">
+          <span class="deger">deger: <b id="d_seryv">${p.serit_y}</b></span></div>
+        <div class="grup"><label>Node toleransi</label>
+          <input type="text" class="alan kk" id="d_tol" value="${p.node_tol}"></div>
+        <label class="anahtar"><input type="checkbox" id="d_temiz" ${p.node_temiz?"checked":""}>
+          <span class="kutu"></span> Node temizligi</label>
+        <div style="flex:1"></div>
+        <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
+        <button class="dugme" id="d_kaydet">Optimize DXF'i Kaydet</button>
+      </div>
+      <div class="cipler">
+        <div class="cip">Tasinan baslangic<b>${v.kaydirilan}</b></div>
+        <div class="cip">Kaldirilan gereksiz node<b>${v.silinen_node}</b></div>
+        <div class="cip">Cember→polyline<b>${v.cember}</b></div>
+        <div class="cip">Riskli parca<b>${v.riskli.length}</b></div>
+        <div class="cip ${v.dogrulama?'ok':'uyari'}">Butunluk<b>${v.dogrulama?'birebir':'UYARI'}</b></div>
+      </div>
+      <div class="durum" id="d_durum"></div>
+    </div>
+    <div class="kart">
+      <div class="paneller">
+        <div class="panel"><div class="pbaslik"><span>ONCESI — orijinal baslangic</span></div>
+          <svg class="tuval" id="svgOnce"></svg></div>
+        <div class="panel"><div class="pbaslik"><span>SONRASI — optimize</span></div>
+          <svg class="tuval" id="svgSonra"></svg>
+          <div class="aciklama"><span><i style="background:#34c759"></i>Yeni baslangic</span>
+            <span><i style="background:#ff3b30"></i>Riskli parca (hold-down)</span></div></div>
+      </div>
+    </div>`;
+  // olaylar
+  setTimeout(() => {
+    $("d_basx").oninput = e => { p.bas_x = +e.target.value; $("d_basxv").textContent = p.bas_x; };
+    $("d_sery").oninput = e => { p.serit_y = +e.target.value; $("d_seryv").textContent = p.serit_y; };
+    $("d_tol").onchange = e => p.node_tol = parseFloat(e.target.value) || 1e-6;
+    $("d_temiz").onchange = e => p.node_temiz = e.target.checked;
+    $("d_yeniden").onclick = () => yukle(doc);
+    $("d_kaydet").onclick = async () => {
+      const r = await api("/api/dxf/kaydet", { yol: doc.yol });
+      $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`
+        : `<span class="ok">Kaydedildi:</span> ${r.cikti}`;
+    };
+  }, 0);
+  return el;
+}
 
-async function gcSirala(mod) {
-  const s = await api("/api/gcode/sirala", { yol: GC.yol, mod });
+function dxfCiz(doc) {
+  const v = doc.veri; if (v.hata) return;
+  cizVarliklar("svgOnce", v.oncesi, [], true);
+  cizVarliklar("svgSonra", v.sonrasi, v.riskli_handlelar, true);
+}
+
+// ===================== G-Code gorunumu =====================
+function gcodeIcerik(doc) {
+  const el = document.createElement("div");
+  const g = doc.veri;
+  if (g.hata) { el.innerHTML = `<div class="kart"><span class="uyari">${g.hata}</span></div>`; return el; }
+  if (!g.guvenli) {
+    el.innerHTML = `<div class="kart"><span class="uyari">${(g.uyarilar||[]).join(" ")}</span></div>`;
+    return el;
+  }
+  el.innerHTML = `
+    <div class="kart">
+      <div class="gc-arac">
+        <button class="dugme hayalet kucuk" data-mod="sol-alt">Auto (sol-alt→sag-ust)</button>
+        <button class="dugme hayalet kucuk" data-mod="serpantin">Serpantin</button>
+        <button class="dugme hayalet kucuk" data-mod="engel">Engel-farkindalik</button>
+        <span class="ayrac"></span>
+        <input type="text" class="alan kk" id="g_swap" placeholder="59 60">
+        <button class="dugme hayalet kucuk" id="g_swapb">Yer degistir</button>
+        <button class="dugme hayalet kucuk" id="g_geri">↶</button>
+        <button class="dugme hayalet kucuk" id="g_ileri">↷</button>
+        <span class="ayrac"></span>
+        <label class="anahtar"><input type="checkbox" id="g_canli" ${doc.gc.canli?"checked":""}>
+          <span class="kutu"></span> Canli onizleme</label>
+        <button class="dugme hayalet kucuk" id="g_goster">Goster</button>
+        <div style="flex:1"></div>
+        <button class="dugme" id="g_kaydet">Kaydet (.tap)</button>
+      </div>
+      <div class="gc-govde">
+        <div>
+          <div class="pbaslik" style="margin-bottom:8px">Kesim sirasi — surukleyerek tasi</div>
+          <div class="liste" id="g_liste"></div>
+        </div>
+        <div>
+          <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — numara=sira, ok=tasima</div>
+          <svg class="tuval" id="svgGc"></svg>
+          <div class="durum" id="g_durum"></div>
+        </div>
+      </div>
+    </div>`;
+  setTimeout(() => {
+    el.querySelectorAll("[data-mod]").forEach(b =>
+      b.onclick = () => gcSirala(doc, b.dataset.mod));
+    $("g_swapb").onclick = () => gcSwap(doc);
+    $("g_swap").onkeydown = e => { if (e.key === "Enter") gcSwap(doc); };
+    $("g_geri").onclick = () => { gcGeri(doc); };
+    $("g_ileri").onclick = () => { gcIleri(doc); };
+    $("g_canli").onchange = e => { doc.gc.canli = e.target.checked; if (e.target.checked) gcCiz(doc); };
+    $("g_goster").onclick = () => gcCiz(doc, true);
+    $("g_kaydet").onclick = () => gcKaydet(doc);
+  }, 0);
+  return el;
+}
+
+function gcAnlik(doc){ doc.gc.gecmis.push(doc.gc.sira.slice()); doc.gc.ileri = []; }
+async function gcSirala(doc, mod) {
+  const s = await api("/api/gcode/sirala", { yol: doc.yol, mod });
   if (s.hata) return;
-  anlikKaydet();
-  GC.sira = s.sira;
-  await ciz();
+  gcAnlik(doc); doc.gc.sira = s.sira; gcCiz(doc);
 }
-
-function swapUygula() {
-  const g = document.getElementById("swapGiris").value.trim().split(/\s+/);
-  if (g.length < 2) return;
-  const i = parseInt(g[0]) - 1, j = parseInt(g[1]) - 1;
-  if (isNaN(i) || isNaN(j) || i < 0 || j < 0 ||
-      i >= GC.sira.length || j >= GC.sira.length) return;
-  anlikKaydet();
-  [GC.sira[i], GC.sira[j]] = [GC.sira[j], GC.sira[i]];
-  document.getElementById("swapGiris").value = "";
-  ciz();
+function gcSwap(doc) {
+  const g = $("g_swap").value.trim().split(/\s+/);
+  const i = parseInt(g[0]) - 1, j = parseInt(g[1]) - 1, n = doc.gc.sira.length;
+  if (isNaN(i) || isNaN(j) || i < 0 || j < 0 || i >= n || j >= n) return;
+  gcAnlik(doc); [doc.gc.sira[i], doc.gc.sira[j]] = [doc.gc.sira[j], doc.gc.sira[i]];
+  $("g_swap").value = ""; gcCiz(doc);
 }
+function gcTasi(doc, k, h) { gcAnlik(doc);
+  const [b] = doc.gc.sira.splice(k, 1); doc.gc.sira.splice(h, 0, b); gcCiz(doc); }
+function gcGeri(doc){ if (doc.gc.gecmis.length){ doc.gc.ileri.push(doc.gc.sira.slice());
+  doc.gc.sira = doc.gc.gecmis.pop(); gcCiz(doc); } }
+function gcIleri(doc){ if (doc.gc.ileri.length){ doc.gc.gecmis.push(doc.gc.sira.slice());
+  doc.gc.sira = doc.gc.ileri.pop(); gcCiz(doc); } }
 
-function tasi(kaynak, hedef) {
-  anlikKaydet();
-  const [b] = GC.sira.splice(kaynak, 1);
-  GC.sira.splice(hedef, 0, b);
-  ciz();
-}
-
-function geriAl() { if (GC.gecmis.length) { GC.ileri.push(GC.sira.slice());
-  GC.sira = GC.gecmis.pop(); ciz(); } }
-function ileriAl() { if (GC.ileri.length) { GC.gecmis.push(GC.sira.slice());
-  GC.sira = GC.ileri.pop(); ciz(); } }
-
-async function gcKaydet() {
-  const s = await api("/api/gcode/kaydet", { yol: GC.yol, sira: GC.sira });
-  const info = document.getElementById("gcInfo");
-  if (s.hata) { info.innerHTML = "<span class='hata'>" + s.hata + "</span>"; return; }
-  let m = `<span class='ok'>Kaydedildi:</span> ${s.cikti} · ` +
-          `bosta yol: <b>${s.bosta_yol.toFixed(1)}</b>`;
+async function gcKaydet(doc) {
+  const s = await api("/api/gcode/kaydet", { yol: doc.yol, sira: doc.gc.sira });
+  const d = $("g_durum");
+  if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`; return; }
+  let m = `<span class="ok">Kaydedildi:</span> ${s.cikti} · bosta yol: <b>${s.bosta_yol.toFixed(1)}</b>`;
   if (s.ihlaller && s.ihlaller.length)
-    m += `<br><span class='hata'>UYARI: ${s.ihlaller.length} icerme ihlali ` +
-         `(bir ic parca kendini iceren parcadan sonra kesiliyor).</span>`;
-  info.innerHTML = m;
+    m += `<br><span class="uyari">UYARI: ${s.ihlaller.length} icerme ihlali.</span>`;
+  d.innerHTML = m;
 }
 
-// blok listesi + SVG cizimi + ihlal denetimi
-async function ciz(zorla) {
-  if (!zorla && !document.getElementById("canli").checked) return;
-  const dv = await api("/api/gcode/dogrula", { yol: GC.yol, sira: GC.sira });
-  const ihlalPoz = new Set();
-  (dv.ihlaller || []).forEach(([a, b]) => { ihlalPoz.add(a); ihlalPoz.add(b); });
-  cizListe(ihlalPoz);
-  cizSvg();
-  const info = document.getElementById("gcInfo");
-  if (dv.ihlaller && dv.ihlaller.length)
-    info.innerHTML = `<span class='hata'>${dv.ihlaller.length} icerme ihlali` +
-      ` — kirmizi bloklar: ic parca disindan sonra kesiliyor. 'Auto' ile ` +
-      `duzeltebilirsiniz.</span>`;
-  else
-    info.innerHTML = "<span class='ok'>Icerme kurali saglaniyor: " +
-      "en icteki parcalar once kesiliyor.</span>";
+async function gcCiz(doc, zorla) {
+  if (!zorla && !doc.gc.canli) return;
+  const dv = await api("/api/gcode/dogrula", { yol: doc.yol, sira: doc.gc.sira });
+  const ihl = new Set(); (dv.ihlaller || []).forEach(([a, b]) => { ihl.add(a); ihl.add(b); });
+  gcListe(doc, ihl); gcSvg(doc);
+  const d = $("g_durum"); if (!d) return;
+  d.innerHTML = (dv.ihlaller && dv.ihlaller.length)
+    ? `<span class="uyari">${dv.ihlaller.length} icerme ihlali — kirmizi bloklar ic parca disindan sonra kesiliyor. 'Auto' ile duzeltin.</span>`
+    : `<span class="ok">Icerme kurali saglaniyor: en icteki once kesiliyor.</span>`;
 }
-
-function blokById(id) { return GC.bloklar.find(b => b.id === id); }
-
-function cizListe(ihlalPoz) {
-  const kap = document.getElementById("blokListe");
-  kap.innerHTML = "";
-  GC.sira.forEach((id, poz) => {
-    const b = blokById(id);
+const blokById = (doc, id) => doc.gc.bloklar.find(b => b.id === id);
+function gcListe(doc, ihl) {
+  const kap = $("g_liste"); if (!kap) return; kap.innerHTML = "";
+  doc.gc.sira.forEach((id, poz) => {
+    const b = blokById(doc, id);
     const d = document.createElement("div");
-    d.className = "blok" + (ihlalPoz.has(poz + 1) ? " ihlal" : "");
+    d.className = "blok" + (ihl.has(poz + 1) ? " ihlal" : "");
     d.draggable = true;
-    d.dataset.poz = poz;
-    d.innerHTML =
-      `<div class="no">${poz + 1}</div>` +
-      `<div><div>X ${b.x.toFixed(1)} &nbsp; Y ${b.y.toFixed(1)}</div>` +
-      `<div class="xy">derinlik ${b.derinlik} · ${b.satir} satir</div></div>` +
-      `<div style="margin-left:auto" class="rozet">` +
-      (b.derinlik > 0 ? "ic (" + b.derinlik + ")" : "dis") + `</div>`;
-    // surukle-birak
-    d.ondragstart = e => e.dataTransfer.setData("poz", poz);
+    d.innerHTML = `<div class="no">${poz + 1}</div>
+      <div><div class="bx">X ${b.x.toFixed(1)}  Y ${b.y.toFixed(1)}</div>
+      <div class="by">derinlik ${b.derinlik} · ${b.satir} satir</div></div>
+      <div class="etk ${b.derinlik>0?'ic':''}">${b.derinlik>0?'ic ('+b.derinlik+')':'dis'}</div>`;
+    d.ondragstart = e => { e.dataTransfer.setData("k", poz); d.classList.add("suru"); };
+    d.ondragend = () => d.classList.remove("suru");
     d.ondragover = e => e.preventDefault();
-    d.ondrop = e => { e.preventDefault();
-      const k = parseInt(e.dataTransfer.getData("poz"));
-      if (!isNaN(k) && k !== poz) tasi(k, poz); };
+    d.ondrop = e => { e.preventDefault(); const k = +e.dataTransfer.getData("k");
+      if (!isNaN(k) && k !== poz) gcTasi(doc, k, poz); };
     kap.appendChild(d);
   });
 }
-
-function cizSvg() {
-  const svg = document.getElementById("svgGcode");
-  svgKur(svg);
-  const W = svg.clientWidth || 600, H = svg.clientHeight || 420;
-  const polys = GC.sira.map(id => blokById(id).poligon).filter(p => p.length);
-  const bbox = tumBbox(polys);
-  const T = fitDonusum(bbox, W, H, 30);
-  // konturlar
-  GC.sira.forEach(id => {
-    const b = blokById(id);
-    if (b.poligon.length < 2) return;
-    const d = b.poligon.map((p, i) => {
-      const [px, py] = T(p[0], p[1]);
-      return (i ? "L" : "M") + px.toFixed(1) + " " + py.toFixed(1);
-    }).join(" ");
-    ekle(svg, "path", { d, fill: "none", stroke: "#3a4560",
-      "stroke-width": 1 });
+function gcSvg(doc) {
+  const svg = $("svgGc"); if (!svg) return; svgKur(svg);
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
+  const polys = doc.gc.sira.map(id => blokById(doc, id).poligon).filter(p => p.length);
+  const T = fitDonusum(tumBbox(polys), W, H, 34);
+  izgara(svg, W, H);
+  doc.gc.sira.forEach(id => {
+    const b = blokById(doc, id); if (b.poligon.length < 2) return;
+    ekle(svg, "path", { d: yolStr(b.poligon, T), fill: "none",
+      stroke: "var(--cizgi)", "stroke-width": 1.4 });
   });
-  // ok tanimlari
   const defs = ekle(svg, "defs", {});
-  defs.innerHTML = `<marker id="ok" markerWidth="8" markerHeight="8" refX="6"
-    refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#5b8def"/></marker>`;
-  // merkezler
-  const merkez = id => {
-    const b = blokById(id);
-    if (b.poligon.length) {
-      let sx = 0, sy = 0; b.poligon.forEach(p => { sx += p[0]; sy += p[1]; });
-      return T(sx / b.poligon.length, sy / b.poligon.length);
-    }
-    return T(b.x, b.y);
-  };
-  // tasima oklari
-  for (let i = 0; i < GC.sira.length - 1; i++) {
-    const [x1, y1] = merkez(GC.sira[i]), [x2, y2] = merkez(GC.sira[i + 1]);
-    ekle(svg, "line", { x1, y1, x2, y2, stroke: "#5b8def",
-      "stroke-width": 1, opacity: .55, "marker-end": "url(#ok)" });
+  defs.innerHTML = `<marker id="ok" markerWidth="7" markerHeight="7" refX="5" refY="3"
+    orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--acc)"/></marker>`;
+  const merkez = id => { const b = blokById(doc, id);
+    if (!b.poligon.length) return T(b.x, b.y);
+    let sx = 0, sy = 0; b.poligon.forEach(p => { sx += p[0]; sy += p[1]; });
+    return T(sx / b.poligon.length, sy / b.poligon.length); };
+  for (let i = 0; i < doc.gc.sira.length - 1; i++) {
+    const [x1, y1] = merkez(doc.gc.sira[i]), [x2, y2] = merkez(doc.gc.sira[i + 1]);
+    ekle(svg, "line", { x1, y1, x2, y2, stroke: "var(--acc)", "stroke-width": 1.3,
+      opacity: .5, "marker-end": "url(#ok)" });
   }
-  // numaralar
-  GC.sira.forEach((id, poz) => {
+  doc.gc.sira.forEach((id, poz) => {
     const [cx, cy] = merkez(id);
-    ekle(svg, "circle", { cx, cy, r: 11, fill: "#171d2b",
-      stroke: poz === 0 ? "#22c55e" : (poz === GC.sira.length - 1 ? "#a855f7"
-        : "#ef4444"), "stroke-width": 2 });
+    const renk = poz === 0 ? "#34c759" : (poz === doc.gc.sira.length - 1 ? "#af52de" : "#ff3b30");
+    ekle(svg, "circle", { cx, cy, r: 12, fill: "var(--yuzey)", stroke: renk, "stroke-width": 2.2 });
     const t = ekle(svg, "text", { x: cx, y: cy + 4, "text-anchor": "middle",
-      "font-size": 11, fill: "#e6ebf5", "font-weight": 700 });
+      "font-size": 11, fill: "var(--metin)", "font-weight": 700 });
     t.textContent = poz + 1;
   });
 }
 
-// =====================================================================
-// Klasor tarama + proje
-// =====================================================================
-async function tara() {
-  const klasor = document.getElementById("klasor").value.trim() || ".";
-  const s = await api("/api/scan", { klasor });
-  const kap = document.getElementById("dosyaListe");
-  kap.classList.remove("gizli");
-  if (s.hata) { kap.innerHTML = "<div class='d hata'>" + s.hata + "</div>"; return; }
-  if (!s.dosyalar.length) { kap.innerHTML = "<div class='d'>Dosya yok</div>"; return; }
-  kap.innerHTML = "";
-  s.dosyalar.forEach(f => {
-    const d = document.createElement("div");
-    d.className = "d";
-    d.innerHTML = `<span class="rozet">${f.tur}</span> ${f.ad}`;
-    d.onclick = () => {
-      if (f.tur === "dxf") {
-        document.getElementById("dxfYol").value = f.yol;
-        document.querySelector('.tab[data-tab="dxf"]').click();
-      } else {
-        document.getElementById("gcYol").value = f.yol;
-        document.querySelector('.tab[data-tab="gcode"]').click();
-      }
-    };
-    kap.appendChild(d);
+// ===================== SVG yardimcilari =====================
+function svgKur(svg){ while (svg.firstChild) svg.removeChild(svg.firstChild); }
+function ekle(svg, tip, attrs){ const e = document.createElementNS(SVGNS, tip);
+  for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
+function tumBbox(liste){ let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  liste.forEach(pts => pts.forEach(p => { x0=Math.min(x0,p[0]);y0=Math.min(y0,p[1]);
+    x1=Math.max(x1,p[0]);y1=Math.max(y1,p[1]); }));
+  return isFinite(x0) ? [x0,y0,x1,y1] : [0,0,1,1]; }
+function fitDonusum(b, W, H, pad){ const w=Math.max(b[2]-b[0],1e-6),h=Math.max(b[3]-b[1],1e-6);
+  const s=Math.min((W-2*pad)/w,(H-2*pad)/h); const ox=(W-s*w)/2,oy=(H-s*h)/2;
+  return (x,y)=>[ox+(x-b[0])*s, H-(oy+(y-b[1])*s)]; }
+function yolStr(pts, T){ return pts.map((p,i)=>{ const [x,y]=T(p[0],p[1]);
+  return (i?"L":"M")+x.toFixed(1)+" "+y.toFixed(1); }).join(" "); }
+function izgara(svg, W, H){ const ad = 40;
+  for (let x=0;x<=W;x+=ad) ekle(svg,"line",{x1:x,y1:0,x2:x,y2:H,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4});
+  for (let y=0;y<=H;y+=ad) ekle(svg,"line",{x1:0,y1:y,x2:W,y2:y,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4}); }
+function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster){
+  const svg = $(svgId); if (!svg) return; svgKur(svg);
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
+  const T = fitDonusum(tumBbox(varliklar.map(v=>v.kontur)), W, H, 26);
+  izgara(svg, W, H);
+  const rs = new Set(riskliHandlelar || []);
+  varliklar.forEach(v => {
+    const riskli = rs.has(v.handle);
+    ekle(svg, "path", { d: yolStr(v.kontur, T), fill:"none",
+      stroke: riskli ? "#ff3b30" : "var(--acc)", "stroke-width": riskli?2:1.3,
+      opacity: riskli?.95:.85 });
+    if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
+      ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,
+        fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)","stroke-width":1.5}); }
   });
-  document.getElementById("pKlasor").value = s.klasor;
 }
 
-async function klasorIsle() {
-  const durum = document.getElementById("pDurum");
-  durum.textContent = "Isleniyor... (bu islem biraz surebilir)";
+// ===================== toplu isle =====================
+$("topluBtn").onclick = () => { $("pKlasor").value = GZ.yol || ""; $("perde").classList.remove("gizli"); };
+function perdeKapat(){ $("perde").classList.add("gizli"); }
+$("perde").onclick = e => { if (e.target === $("perde")) perdeKapat(); };
+async function topluIsle() {
+  const d = $("pDurum"); d.innerHTML = `<span class="yukleniyor"></span> Isleniyor…`;
   const s = await api("/api/proje/klasor", {
-    klasor: document.getElementById("pKlasor").value.trim(),
-    proje_ad: document.getElementById("pAd").value.trim() || "proje",
-    proje_kok: document.getElementById("pKok").value.trim() || null,
-    onizleme: document.getElementById("pOnizleme").checked,
-    opts: { gcode_mod: document.getElementById("pMod").value },
-  });
-  if (s.hata) { durum.innerHTML = "<span class='hata'>" + s.hata + "</span>"; return; }
-  let m = `<span class='ok'>${s.sayi} dosya islendi.</span> Cikti: ${s.dizin}\n`;
-  s.gunluk.forEach(g => {
-    if (g.tur === "dxf")
-      m += `\nDXF ${g.giris} → node -${g.silinen_node}, ` +
-           `tasinan ${g.kaydirilan}, butunluk ${g.dogrulama ? "OK" : "UYARI"}`;
-    else if (g.hata) m += `\nG-Code ${g.giris} → ${g.hata}`;
-    else m += `\nG-Code ${g.giris} → ${g.blok} blok (${g.mod})`;
-  });
-  durum.textContent = "";
-  durum.innerHTML = m.replace(/\n/g, "<br>");
+    klasor: $("pKlasor").value.trim(), proje_ad: $("pAd").value.trim() || "proje",
+    onizleme: $("pOnizleme").checked, opts: { gcode_mod: $("pMod").value } });
+  if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`; return; }
+  let m = `<span class="ok">${s.sayi} dosya islendi.</span> Cikti: ${s.dizin}`;
+  d.innerHTML = m;
 }
+
+// ===================== baslangic =====================
+gozat(null);
