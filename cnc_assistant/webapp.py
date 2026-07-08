@@ -108,15 +108,47 @@ def api_scan(veri):
     return {"klasor": os.path.abspath(klasor), "dosyalar": dosyalar}
 
 
+# Guvenlik/performans limitleri (sistem cokmesin diye)
+_ALT_KLASOR_SAYIM_LIMITI = 400     # bundan fazla alt klasor varsa sayim yapilma
+_KLASOR_TARAMA_LIMITI = 4000       # bir klasorde en fazla bu kadar oge taranir
+
+
+def _klasor_say(yol):
+    """Bir klasordeki (yalnizca dogrudan icindeki) DXF ve G-Code dosya
+    sayisini doner: (dxf, gcode). Cok buyuk klasorlerde sistemin kilitlenmesini
+    onlemek icin taranan oge sayisi _KLASOR_TARAMA_LIMITI ile sinirlidir."""
+    dxf = gcode = 0
+    try:
+        with os.scandir(yol) as it:
+            for i, g in enumerate(it):
+                if i >= _KLASOR_TARAMA_LIMITI:
+                    break
+                try:
+                    if not g.is_file():
+                        continue
+                except OSError:
+                    continue
+                uz = os.path.splitext(g.name)[1].lower()
+                if uz == ".dxf":
+                    dxf += 1
+                elif uz in P.GCODE_UZANTILAR:
+                    gcode += 1
+    except (PermissionError, OSError):
+        return None
+    return (dxf, gcode)
+
+
 def api_gozat(veri):
-    """Sunucu tarafinda klasor gezme: alt klasorler + DXF/G-Code dosyalari."""
+    """Sunucu tarafinda klasor gezme: alt klasorler + DXF/G-Code dosyalari.
+    Her alt klasor icin dogrudan icindeki DXF/G-Code sayilari da hesaplanir
+    (cok fazla alt klasor varsa performans icin atlanir)."""
     yol = veri.get("yol") or os.getcwd()
     yol = os.path.abspath(os.path.expanduser(yol))
     if os.path.isfile(yol):
         yol = os.path.dirname(yol)
     if not os.path.isdir(yol):
         return {"hata": f"Klasor yok: {yol}"}
-    klasorler, dosyalar = [], []
+    ham_klasorler, dosyalar = [], []
     try:
         for ad in sorted(os.listdir(yol), key=str.lower):
             if ad.startswith("."):
@@ -124,7 +156,7 @@ def api_gozat(veri):
             tam = os.path.join(yol, ad)
             try:
                 if os.path.isdir(tam):
-                    klasorler.append({"ad": ad, "yol": tam})
+                    ham_klasorler.append((ad, tam))
                 elif os.path.isfile(tam):
                     uz = os.path.splitext(ad)[1].lower()
                     tur = ("dxf" if uz == ".dxf"
@@ -136,9 +168,22 @@ def api_gozat(veri):
                 continue
     except PermissionError:
         return {"hata": f"Erisim reddedildi: {yol}"}
+
+    # Alt klasor icerik sayimlari (limit dahilinde)
+    say = len(ham_klasorler) <= _ALT_KLASOR_SAYIM_LIMITI
+    klasorler = []
+    for ad, tam in ham_klasorler:
+        d = {"ad": ad, "yol": tam, "dxf": None, "gcode": None}
+        if say:
+            sonuc = _klasor_say(tam)
+            if sonuc is not None:
+                d["dxf"], d["gcode"] = sonuc
+        klasorler.append(d)
+
     ust = os.path.dirname(yol)
     return {"yol": yol, "ust": ust if ust != yol else None,
             "ev": os.path.expanduser("~"), "cwd": os.getcwd(),
+            "sayim_yapildi": say,
             "klasorler": klasorler, "dosyalar": dosyalar}
 
 
@@ -303,12 +348,12 @@ class Isleyici(BaseHTTPRequestHandler):
         self._gonder(200, json.dumps(sonuc, ensure_ascii=False))
 
 
-def calistir(port=8000, ac=True, host="127.0.0.1"):
+def calistir(port=8000, ac=False, host="127.0.0.1"):
     sunucu = ThreadingHTTPServer((host, port), Isleyici)
     url = f"http://{host}:{port}"
     print("=" * 62)
-    print(f"CNC-Assistant web arayuzu: {url}")
-    print("Durdurmak icin Ctrl+C")
+    print(f"CNC-Assistant web arayuzu hazir:  {url}")
+    print("Tarayicinizda yukaridaki adresi acin.  Durdurmak icin Ctrl+C")
     print("=" * 62)
     if ac:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()

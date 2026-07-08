@@ -76,6 +76,8 @@ def kurulum_parser():
                          help="Web arayuzunu baslat (tarayicida acilir)")
     g_genel.add_argument("--port", type=int, default=8000,
                          help="Web arayuzu portu")
+    g_genel.add_argument("--tarayici-ac", action="store_true",
+                         help="Web arayuzunu otomatik olarak tarayicida ac")
     g_genel.add_argument("--proje", default=None,
                          help="Proje adi (ciktiler ayri dizinlere yerlesir)")
     g_genel.add_argument("--proje-kok", default=None,
@@ -137,7 +139,7 @@ def main(argv=None):
 
     if args.web:
         from . import webapp
-        webapp.calistir(port=args.port)
+        webapp.calistir(port=args.port, ac=args.tarayici_ac)
         return
 
     if not args.dosyalar:

@@ -82,6 +82,12 @@ body{
 .oge .rozet{margin-left:auto;font-size:10px;color:var(--metin2);
   border:1px solid var(--cizgi);padding:1px 7px;border-radius:20px;flex:none}
 .oge .boyut{margin-left:auto;font-size:11px;color:var(--metin2);flex:none}
+.oge .saylar{margin-left:auto;display:flex;gap:4px;flex:none}
+.say{font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;
+  font-variant-numeric:tabular-nums;letter-spacing:.2px}
+.say.t{color:#fff;background:var(--mor)}      /* toolpath / gcode */
+.say.v{color:#3a2c00;background:var(--amber)} /* vektor / dxf */
+@media (prefers-color-scheme: dark){ .say.v{color:#241c00} }
 .kenar-alt{padding:10px;border-top:1px solid var(--cizgi)}
 
 /* ---------- dugmeler ---------- */

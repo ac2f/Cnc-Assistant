@@ -43,22 +43,37 @@ async function gozat(yol) {
     e.onclick = () => gozat(yolu); yc.appendChild(e);
     yc.appendChild(document.createTextNode("›"));
   });
-  // liste
+  // liste  (NOT: her zaman appendChild kullan; innerHTML += tiklama
+  // olaylarini siler ve boş klasorde ".." tiklanamaz hale gelirdi)
   g.innerHTML = "";
   if (s.ust) {
-    const u = oge(IK_KLASOR, "..", "", "klasor"); u.onclick = () => gozat(s.ust);
+    const u = oge(IK_KLASOR, "..", "", "klasor ust"); u.onclick = () => gozat(s.ust);
     g.appendChild(u);
   }
   s.klasorler.forEach(k => {
-    const e = oge(IK_KLASOR, k.ad, "", "klasor"); e.onclick = () => gozat(k.yol);
+    const e = oge(IK_KLASOR, k.ad, sayimRozet(k), "klasor");
+    e.onclick = () => gozat(k.yol);
     g.appendChild(e);
   });
   s.dosyalar.forEach(f => {
     const e = oge(IK_DOSYA, f.ad, `<span class="rozet">${f.tur}</span>`);
     e.onclick = () => dosyaAc(f); g.appendChild(e);
   });
-  if (!s.klasorler.length && !s.dosyalar.length)
-    g.innerHTML += `<div class="oge" style="color:var(--metin2)">Bu klasorde DXF/G-Code yok</div>`;
+  if (!s.klasorler.length && !s.dosyalar.length) {
+    const bos = document.createElement("div");
+    bos.className = "oge"; bos.style.color = "var(--metin2)";
+    bos.style.cursor = "default"; bos.textContent = "Bu klasorde DXF/G-Code yok";
+    g.appendChild(bos);
+  }
+}
+// Alt klasor icerik sayaci: magenta T{gcode} (toolpath), sari V{dxf} (vektor).
+// Icinde yoksa bos birakilir.
+function sayimRozet(k) {
+  if (k.gcode == null && k.dxf == null) return "";  // sayim yapilmadi (limit)
+  let s = "";
+  if (k.gcode) s += `<span class="say t">T${k.gcode}</span>`;
+  if (k.dxf)   s += `<span class="say v">V${k.dxf}</span>`;
+  return s ? `<span class="saylar">${s}</span>` : "";
 }
 function oge(ik, isim, sag, sinif) {
   const d = document.createElement("div");
