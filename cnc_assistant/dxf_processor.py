@@ -331,6 +331,34 @@ def adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani):
 # Onizleme icin: her kapali vektorun (baslangic_noktasi, [kontur_noktalari])
 # ----------------------------------------------------------------------
 
+def optimize_ve_kaydet(giris, cikti, opts, alan_orani=0.10, boyut_orani=0.50):
+    """Bir DXF'i optimize edip `cikti` yoluna kaydeder. Konsola log basar ve
+    onizleme/istatistik icin toplu bir sozluk doner (oncesi/sonrasi kontur +
+    baslangic noktalari, riskli parcalar, dogrulama sonucu)."""
+    doc = ezdxf.readfile(giris)
+    msp = doc.modelspace()
+    oncesi = baslangic_noktalari_ve_konturlar(doc)
+    stats = adim1_baslangic_optimizasyonu(msp, opts)
+    print("-" * 62)
+    riskli = adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani)
+    doc.saveas(cikti)
+    print("-" * 62)
+    dogrulama = butunluk_dogrula(giris, cikti)
+    print(f"[Adim 1] Cikti dosyasi: {cikti}")
+    sonrasi_doc = ezdxf.readfile(cikti)
+    sonrasi = baslangic_noktalari_ve_konturlar(sonrasi_doc)
+    return {
+        "giris": giris, "cikti": cikti,
+        "kaydirilan": stats["kaydirilan"],
+        "silinen_node": stats["silinen_node"],
+        "cember": stats["cember"],
+        "riskli": riskli,
+        "riskli_handlelar": {h for _, h, _, _, _ in riskli},
+        "oncesi": oncesi, "sonrasi": sonrasi,
+        "dogrulama": dogrulama,
+    }
+
+
 def baslangic_noktalari_ve_konturlar(doc):
     """Onizleme icin her cizilebilir varligin baslangic noktasini ve
     flatten edilmis kontur noktalarini doner."""

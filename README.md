@@ -11,10 +11,17 @@ Uc isi bir arada yapar:
 2. **Gereksiz node temizligi** — vektorlerin uzerindeki fazla (es-dogrultulu)
    noktalari, **sekli %100 koruyarak** kaldirir; boylece ArtCAM vb.
    yazilimlarda dosya hafifler ve gereksiz node kalabaligi ortadan kalkar.
-3. **G-Code blok siralama** — hazir G-Code'daki kesim bloklarini, malzeme her
-   zaman destekte kalacak sekilde **sol-alttan sag-uste** dizer. Otomatik
-   yapabildigi gibi, **etkilesimli (canli) bir terminal editoru** ile elle de
-   duzenlenebilir (geri alma + canli onizleme dahil).
+3. **G-Code blok siralama** — hazir G-Code'daki kesim bloklarini siralar.
+   **Icerme (nesting) her zaman birincil kuraldir:** bir "O" harfinin
+   gobegindeki tum vektorler dis konturdan **%100 once** kesilir. Ayni derinlik
+   seviyesinde ise malzeme destekte kalacak sekilde **sol-alttan sag-uste**
+   dizilir. Otomatik yapabildigi gibi, **web arayuzu** veya **etkilesimli
+   terminal editoru** ile elle de duzenlenebilir (geri alma + canli onizleme).
+
+4. **Web arayuzu** — parametreleri ayarlayip **anlik** onizleme goren, G-Code
+   siralamasini surukleyerek/`59 60` yazarak duzenleyen, klasorleri tek tusla
+   toplu isleyen bir tarayici arayuzu. **Hicbir ek kutuphane gerektirmez**
+   (Python standart kutuphanesi + ezdxf).
 
 > Tasarim ilkesi: **olculer asla degismez.** Her DXF cikti dosyasi, kaydedildikten
 > sonra orijinaliyle (bounding box + toplam cevre uzunlugu) otomatik karsilastirilir;
@@ -45,14 +52,21 @@ Python 3.8+ gerektirir.
 ## Hizli baslangic
 
 ```bash
+# WEB ARAYUZU (onerilir) - tarayicida acilir
+python main.py --web
+python main.py --web --port 8000
+
 # DXF: node temizligi + baslangic optimizasyonu + risk uyarisi + onizleme
 python main.py tabaka.dxf
 
-# G-Code: otomatik yeniden siralama (sol-alt -> sag-ust)
+# G-Code: otomatik yeniden siralama (icerme-oncelikli + sol-alt -> sag-ust)
 python main.py kesim.tap
 
-# G-Code: ETKILESIMLI (canli) siralama editoru
+# G-Code: ETKILESIMLI (canli) terminal editoru
 python main.py kesim.tap -e
+
+# BIR KLASOR ver -> icindeki her sey otomatik, ayri dizinlere islenir
+python main.py /yol/klasor --proje musteriA
 
 # Birden fazla dosya ayni anda (mod uzantidan otomatik secilir)
 python main.py a.dxf b.tap c.nc
@@ -114,9 +128,69 @@ onerisi). DXF'e cizim **eklenmez**. Esikler: `--alan-orani`, `--boyut-orani`.
 Mevcut G-Code satirlari **aynen** korunur; yalnizca bagimsiz kesim bloklarinin
 **sirasi** degisir.
 
+**Icerme (nesting) onceligi — %100 garanti.** Bir blogun konturu baska bir
+blogun konturunun *icinde* ise (bbox icerme + agirlik-merkezi ray-casting testi
+ile tespit edilir), ictekiler her zaman **once** kesilir. Bir "O" harfinin
+gobegindeki 100 vektor, O'nun dis konturundan kesinlikle once islenir. Bu,
+secilen travel stratejisinden **bagimsiz** birincil kuraldir; en icteki
+(derinligi en yuksek) seviyeden disa dogru ilerlenir. Elle siralamada bu kural
+ihlal edilirse arayuz/terminal **kirmizi uyari** verir.
+
+Ayni derinlik seviyesindeki bloklar arasinda travel stratejisi:
 - **Varsayilan:** sol-alttan sag-uste (destek korumali).
 - `--serpantin`: zigzag (bosta tasimayi azaltir).
 - `--engel`: engel-farkindalikli (uzerine uzanan parcayi once temizler).
+
+---
+
+## Web arayuzu
+
+```bash
+python main.py --web           # http://127.0.0.1:8000 acilir
+```
+
+Uc sekme:
+
+- **DXF:** dosya sec, parametreleri (baslangic yatay/dikey, node toleransi,
+  node temizligi ac/kapa) ayarla, **ONCESI/SONRASI** baslangic noktalarini
+  **anlik** SVG olarak gor. "Onizle + Kaydet" optimize DXF'i yazar.
+- **G-Code:** dosya yukle; numarali blok listesi + canli sira onizlemesi
+  (numara = kesim sirasi, ok = tasima yolu) gelir.
+  - **Elle siralama:** bloklari **surukle-birak** ile tasi, ya da `59 60`
+    yazip iki blogun yerini degistir.
+  - **Auto / Serpantin / Engel** butonlari ile otomatik sirala (hepsi icerme
+    kuralini korur).
+  - **Geri / Ileri** (undo/redo), **Canli onizleme** toggle'i (her degisiklikte
+    guncelle ac/kapa), **Goster** (tek seferlik), **Kaydet**.
+  - Icerme ihlalleri kirmizi vurgulanir ve alt bilgide raporlanir.
+- **Proje / Klasor:** bir klasor + proje adi ver, "Klasoru Otomatik Isle" ile
+  icindeki her sey ayri dizinlere islenir.
+
+Arayuz saf HTML/JS'tir (SVG ile cizim); onizlemeler **anlik** ve tarayici
+tarafinda uretilir.
+
+---
+
+## Proje / klasor modu
+
+Her sey ayri dizinlere yerlesir, karisiklik olmaz:
+
+```
+<proje_kok>/<proje_adi>/
+    01_girdi/            islenen girdilerin kopyasi
+    02_dxf_optimized/    optimize DXF ciktilari
+    03_gcode_reordered/  yeniden siralanmis G-Code
+    04_onizleme/         PNG onizlemeler
+    proje.json           ayarlar + islem gunlugu
+```
+
+```bash
+# Klasordeki tum .dxf ve G-Code dosyalarini isim sirasiyla otomatik isle
+python main.py /yol/klasor --proje musteriA --proje-kok /cikti/klasoru
+
+# Tekil dosyalari da proje dizinlerine yazdirabilirsiniz
+python main.py a.dxf b.tap --proje musteriA
+```
 
 Guvenlik onlemleri:
 - **G91 (artimli mod)** tespit edilirse islem iptal edilir (siralamak konumlari
@@ -175,6 +249,12 @@ Komutlar:
 ## Komut satiri secenekleri
 
 ```
+Genel / arayuz:
+  --web               Web arayuzunu baslat
+  --port PORT         Web portu                                     (8000)
+  --proje AD          Proje adi (ciktiler ayri dizinlere yerlesir)
+  --proje-kok DIZIN   Proje kok dizini
+
 DXF secenekleri:
   --alan-orani        Risk esigi: parca alani / tabaka alani         (0.10)
   --boyut-orani       Risk esigi: parca eni-boyu / tabaka eni-boyu   (0.50)
@@ -202,9 +282,12 @@ Cnc-Assistant/
 ├── cnc_assistant/
 │   ├── geometry.py             # node temizligi + baslangic hedefleme (saf python)
 │   ├── dxf_processor.py        # DXF okuma/yazma, adim 1-2, butunluk dogrulama
-│   ├── gcode.py                # G-Code ayristirma + siralama stratejileri
+│   ├── gcode.py                # G-Code ayristirma + icerme + siralama stratejileri
 │   ├── preview.py              # oncesi/sonrasi + sira PNG onizlemeleri
-│   ├── interactive.py          # etkilesimli editor (geri-al + canli onizleme)
+│   ├── interactive.py          # etkilesimli terminal editoru (geri-al + onizleme)
+│   ├── project.py              # proje dizin yapisi + klasor toplu isleme
+│   ├── webapp.py               # bagimliliksiz web sunucusu (http.server)
+│   ├── web/                    # arayuz (index.html + app.js)
 │   └── cli.py                  # argparse komut satiri
 ├── tests/                      # birim testleri
 ├── examples/ornek_uret.py      # demo DXF/G-Code uretici

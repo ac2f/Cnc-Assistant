@@ -122,6 +122,50 @@ def test_tasi_komutu():
         os.remove(yol)
 
 
+def _kare_blok(x0, y0, x1, y1):
+    """Verilen kosegenle dikdortgen kesim blogu (kapali kontur)."""
+    return [
+        f"G0 X{x0} Y{y0}", "G1 Z-1",
+        f"G1 X{x1} Y{y0}", f"G1 X{x1} Y{y1}",
+        f"G1 X{x0} Y{y1}", f"G1 X{x0} Y{y0}",
+        "G0 Z5",
+    ]
+
+
+def test_icerme_icteki_once_kesilir():
+    # Dis kontur (0..100), ortada bir delik konturu (20..80), en icte kucuk
+    # bir parca (45..55). Girdi sirasi bilerek TERS (once dis).
+    from cnc_assistant.gcode import containment_derinlik, sirala
+    dis = _kare_blok(0, 0, 100, 100)
+    orta = _kare_blok(20, 20, 80, 80)
+    ic = _kare_blok(45, 45, 55, 55)
+    bloklar = [dis, orta, ic]                 # kotu sira: disi once
+    d = containment_derinlik(bloklar)
+    assert d == [0, 1, 2]                      # dis=0, orta=1, ic=2
+    sirali = sirala(bloklar, "sol-alt")
+    # En icteki once, en distaki sonra olmali
+    from cnc_assistant.gcode import blok_bas_xy
+    assert blok_bas_xy(sirali[0]) == (45.0, 45.0)   # en ic
+    assert blok_bas_xy(sirali[1]) == (20.0, 20.0)   # orta
+    assert blok_bas_xy(sirali[2]) == (0.0, 0.0)     # en dis
+
+
+def test_icerme_coklu_ic_parca():
+    # "O" gobegi: dis O konturu + gobekte 5 kucuk parca. Hepsi O'dan once.
+    from cnc_assistant.gcode import containment_derinlik, sirala, blok_bbox
+    dis = _kare_blok(0, 0, 200, 200)
+    icler = [_kare_blok(10 + i * 30, 90, 30 + i * 30, 110) for i in range(5)]
+    bloklar = [dis] + icler
+    d = containment_derinlik(bloklar)
+    assert d[0] == 0 and all(x == 1 for x in d[1:])
+    sirali = sirala(bloklar, "sol-alt")
+    # Son blok dis kontur olmali; ilk 5 ic parcalar
+    assert blok_bbox(sirali[-1]) == (0.0, 0.0, 200.0, 200.0)
+    for b in sirali[:-1]:
+        bb = blok_bbox(b)
+        assert bb != (0.0, 0.0, 200.0, 200.0)
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0

@@ -8,9 +8,10 @@ temizligi, riskli parca uyarisi ve G-Code blok siralama (otomatik +
 etkilesimli) araci.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
-from . import geometry, dxf_processor, gcode, preview, interactive, cli  # noqa: F401
+from . import (geometry, dxf_processor, gcode, preview, interactive,  # noqa: F401
+               project, cli)
 
 __all__ = ["geometry", "dxf_processor", "gcode", "preview", "interactive",
-           "cli", "__version__"]
+           "project", "cli", "__version__"]

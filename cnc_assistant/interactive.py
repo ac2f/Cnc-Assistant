@@ -83,10 +83,18 @@ class EtkilesimliEditor:
         if not ozet:
             print("(kesim blogu yok)")
             return
-        print(f"{'Sira':>4}  {'X':>10}  {'Y':>10}  {'satir':>6}")
+        print(f"{'Sira':>4}  {'X':>10}  {'Y':>10}  {'derinlik':>8}  {'satir':>6}")
         for b in ozet:
+            etiket = f"ic({b['derinlik']})" if b["derinlik"] else "dis"
             print(f"{b['sira']:>4}  {b['x']:>10.2f}  {b['y']:>10.2f}  "
-                  f"{b['satir_sayisi']:>6}")
+                  f"{etiket:>8}  {b['satir_sayisi']:>6}")
+        ihlaller = self.prog.icerme_ihlalleri()
+        if ihlaller:
+            print(f"[UYARI] {len(ihlaller)} icerme ihlali: "
+                  + ", ".join(f"{a}(ic) < {b}(dis)" for a, b in ihlaller)
+                  + "  -> 'auto' ile duzeltebilirsiniz.")
+        else:
+            print("[OK] Icerme kurali saglaniyor (en icteki once kesiliyor).")
         print(f"Bosta tasima: {self.prog.bosta_yol():.1f} | "
               f"Canli onizleme: {'ACIK' if self.canli_onizleme else 'KAPALI'}")
 

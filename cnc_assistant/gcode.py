@@ -81,6 +81,97 @@ def blok_bbox(blok):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def blok_polygon(blok):
+    """Bloktaki hareketlerden (mutlak konum takip edilerek) yaklasik kontur
+    poligonunu (x, y) listesi olarak cikarir. Icerme (nesting) testi icin."""
+    pts = []
+    x = y = None
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "X" in w or "Y" in w:
+            if "X" in w:
+                x = w["X"]
+            if "Y" in w:
+                y = w["Y"]
+            if x is not None and y is not None:
+                pts.append((x, y))
+    return pts
+
+
+def _poligon_merkez(poly):
+    if not poly:
+        return (0.0, 0.0)
+    return (sum(p[0] for p in poly) / len(poly),
+            sum(p[1] for p in poly) / len(poly))
+
+
+def _nokta_poligon_icinde(nokta, poly):
+    """Ray-casting: nokta kapali poligonun icinde mi?"""
+    n = len(poly)
+    if n < 3:
+        return False
+    px, py = nokta
+    icinde = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        if ((yi > py) != (yj > py)) and \
+           (px < (xj - xi) * (py - yi) / (yj - yi + 1e-18) + xi):
+            icinde = not icinde
+        j = i
+    return icinde
+
+
+def _bbox_alani(b):
+    return (b[2] - b[0]) * (b[3] - b[1])
+
+
+def _ic_ice_mi(i_bbox, i_poly, d_bbox, d_poly, tol):
+    """i blogu, d blogunun ICINDE mi? (i=ic aday, d=dis aday)
+
+    Kosullar (hepsi saglanmali):
+      * i'nin bbox'i d'nin bbox'i icinde (tolerans ile),
+      * d'nin alani i'den belirgin sekilde buyuk (esit/multi-paso kendini
+        icermesin diye),
+      * i'nin agirlik merkezi d'nin poligonu icinde (ray-casting).
+    """
+    if len(d_poly) < 3:
+        return False
+    # bbox icerme
+    if not (d_bbox[0] - tol <= i_bbox[0] and i_bbox[2] <= d_bbox[2] + tol and
+            d_bbox[1] - tol <= i_bbox[1] and i_bbox[3] <= d_bbox[3] + tol):
+        return False
+    # alan: dis belirgin buyuk olmali (ayni kontur multi-paso -> icerme yok)
+    if _bbox_alani(d_bbox) <= _bbox_alani(i_bbox) + max(tol * tol, 1e-9):
+        return False
+    # merkez testi
+    return _nokta_poligon_icinde(_poligon_merkez(i_poly), d_poly)
+
+
+def containment_derinlik(bloklar):
+    """Her blogun ICERME DERINLIGINI doner: kendisini iceren kac blok var.
+    Derinligi buyuk olan (en icteki) once kesilmelidir. Bu, bir 'O' harfinin
+    gobegindeki tum vektorlerin dis konturdan ONCE kesilmesini %100 garanti
+    etmek icin kullanilir."""
+    n = len(bloklar)
+    polys = [blok_polygon(b) for b in bloklar]
+    bboxes = [blok_bbox(b) for b in bloklar]
+
+    tum = [v for box in bboxes for v in (box[0], box[2])]
+    olcek = (max(tum) - min(tum)) if tum else 0.0
+    tol = max(olcek * 1e-4, 1e-6)
+
+    derinlik = [0] * n
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            if _ic_ice_mi(bboxes[i], polys[i], bboxes[j], polys[j], tol):
+                derinlik[i] += 1
+    return derinlik
+
+
 def toplam_bosta_yol(bloklar):
     """Bloklar arasi (kesim disi) XY tasima mesafesi toplami."""
     toplam, konum = 0.0, None
@@ -176,6 +267,33 @@ def serpantin_sirala(bloklar):
     return sonuc
 
 
+def _strateji_uygula(bloklar, mod):
+    if mod == "serpantin":
+        return serpantin_sirala(bloklar)
+    if mod == "engel":
+        return engel_farkindalikli_sirala(bloklar)
+    return sol_alt_sag_ust_sirala(bloklar)
+
+
+def sirala(bloklar, mod="sol-alt"):
+    """Bloklari siralar. ICERME (nesting) her zaman BIRINCIL anahtardir:
+    en icteki (derinligi en yuksek) bloklar once kesilir; boylece 'O'
+    harfinin gobegindeki vektorler dis konturdan ONCE kesilir. Ayni derinlik
+    seviyesindeki bloklar arasinda secilen strateji (mod) uygulanir."""
+    if not bloklar:
+        return []
+    derinlik = containment_derinlik(bloklar)
+    # Derinlige gore grupla
+    gruplar = {}
+    for b, d in zip(bloklar, derinlik):
+        gruplar.setdefault(d, []).append(b)
+    sonuc = []
+    # Derinligi buyukten kucuge (en icten disa)
+    for d in sorted(gruplar, reverse=True):
+        sonuc.extend(_strateji_uygula(gruplar[d], mod))
+    return sonuc
+
+
 def _retract_ile_bitiyor(blok):
     for s in reversed(blok):
         w = satir_kelimeleri(s)
@@ -245,14 +363,14 @@ class GCodeProgram:
 
     # -- siralama ------------------------------------------------------
     def auto_sirala(self, serpantin=False, engel=False):
-        """Varsayilan: sol-alt -> sag-ust. serpantin=zigzag, engel=engel
-        farkindalikli (golge) siralama."""
-        if serpantin:
-            self.bloklar = serpantin_sirala(self.bloklar)
-        elif engel:
-            self.bloklar = engel_farkindalikli_sirala(self.bloklar)
-        else:
-            self.bloklar = sol_alt_sag_ust_sirala(self.bloklar)
+        """Icerme-oncelikli (en icteki once) + secilen strateji ile siralar.
+        Varsayilan strateji sol-alt -> sag-ust; serpantin=zigzag, engel=golge."""
+        mod = "serpantin" if serpantin else "engel" if engel else "sol-alt"
+        self.bloklar = sirala(self.bloklar, mod)
+
+    def derinlikler(self):
+        """Mevcut blok sirasindaki icerme derinlikleri."""
+        return containment_derinlik(self.bloklar)
 
     def sirali_bloklar(self):
         return self.bloklar + ([self.sabit_son] if self.sabit_son else [])
@@ -260,15 +378,40 @@ class GCodeProgram:
     def bosta_yol(self):
         return toplam_bosta_yol(self.sirali_bloklar())
 
-    def ozet(self):
-        """Etkilesimli arayuz / onizleme icin blok ozetleri."""
+    def ozet(self, derinlik_hesapla=True):
+        """Etkilesimli arayuz / onizleme icin blok ozetleri (poligon dahil)."""
+        derinlik = containment_derinlik(self.bloklar) if derinlik_hesapla \
+            else [0] * len(self.bloklar)
         out = []
         for n, blok in enumerate(self.bloklar, 1):
             bx, by = blok_bas_xy(blok)
             box = blok_bbox(blok)
             out.append({"sira": n, "x": bx, "y": by, "bbox": box,
+                        "poligon": blok_polygon(blok),
+                        "derinlik": derinlik[n - 1],
                         "satir_sayisi": len(blok)})
         return out
+
+    def icerme_ihlalleri(self):
+        """Mevcut sirada icerme kuralinin ihlal edildigi (bir blok, kendisini
+        iceren bir bloktan SONRA kesiliyor) ciftleri doner. Elle siralamada
+        uyari vermek icin."""
+        polys = [blok_polygon(b) for b in self.bloklar]
+        bboxes = [blok_bbox(b) for b in self.bloklar]
+        tum = [v for box in bboxes for v in (box[0], box[2])]
+        olcek = (max(tum) - min(tum)) if tum else 0.0
+        tol = max(olcek * 1e-4, 1e-6)
+        ihlaller = []
+        n = len(self.bloklar)
+        for i in range(n):        # ic aday
+            for j in range(n):    # dis aday
+                if i == j:
+                    continue
+                if _ic_ice_mi(bboxes[i], polys[i], bboxes[j], polys[j], tol):
+                    # i, j'nin icinde; i once (kucuk sira) kesilmeli
+                    if i > j:
+                        ihlaller.append((i + 1, j + 1))
+        return ihlaller
 
     # -- cikti ---------------------------------------------------------
     def yaz(self, cikti=None):
