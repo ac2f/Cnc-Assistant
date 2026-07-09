@@ -17,6 +17,7 @@
     </div>
   </div>
   <div class="ust-sag">
+    <button class="dugme hayalet" id="tumKaydetBtn" title="Acik tum dosyalari kaydet (Ctrl+Shift+S)">Tumunu Kaydet</button>
     <button class="dugme hayalet" id="topluBtn" title="Bu klasordeki tum dosyalari ayri dizinlere isle">Toplu Isle</button>
     <button class="dugme hayalet ikon" id="temaBtn" title="Acik/koyu tema">&#9689;</button>
   </div>
@@ -34,6 +35,9 @@
       </div>
     </div>
     <div class="yol-cubugu" id="yolCubugu"></div>
+    <div class="ara-kutu">
+      <input type="text" id="ara" class="alan" placeholder="Ara / filtrele…">
+    </div>
     <div class="gezgin" id="gezgin"></div>
     <div class="kenar-alt">
       <button class="dugme genis" id="tumDxfBtn">Klasordeki tum DXF'leri ac</button>
@@ -80,6 +84,11 @@
     </div>
     <div class="durum" id="pDurum"></div>
   </div>
+</div>
+
+<!-- surukle-birak katmani -->
+<div class="birak gizli" id="birak">
+  <div class="birak-ic">◇  Dosyalari buraya birakin<br><span>DXF veya G-Code</span></div>
 </div>
 
 <script src="/app.js"></script>

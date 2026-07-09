@@ -13,23 +13,35 @@ async function api(uc, veri) {
 }
 const $ = id => document.getElementById(id);
 
-// ===================== tema =====================
-$("temaBtn").onclick = () => {
-  const kok = document.documentElement;
-  const su = kok.getAttribute("data-tema")
-    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-  kok.setAttribute("data-tema", su === "dark" ? "light" : "dark");
+// ===================== ayar saklama (localStorage) =====================
+const AYAR = {
+  al(k, v) { try { const s = localStorage.getItem("cnc_" + k);
+    return s === null ? v : JSON.parse(s); } catch (e) { return v; } },
+  yaz(k, v) { try { localStorage.setItem("cnc_" + k, JSON.stringify(v)); } catch (e) {} },
 };
+
+// ===================== tema =====================
+function temaUygula(t) { document.documentElement.setAttribute("data-tema", t); AYAR.yaz("tema", t); }
+$("temaBtn").onclick = () => {
+  const su = document.documentElement.getAttribute("data-tema")
+    || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  temaUygula(su === "dark" ? "light" : "dark");
+};
+{ const t = AYAR.al("tema", null); if (t) temaUygula(t); }
 
 // ===================== dosya gezgini =====================
 let GZ = { yol: null, ev: null, cwd: null };
+let SON_TARAMA = null;      // filtre icin son gozat sonucu
 
 async function gozat(yol) {
   const s = await api("/api/gozat", { yol });
   const g = $("gezgin");
   if (s.hata) { g.innerHTML = `<div class="oge">${s.hata}</div>`; return; }
   GZ = { yol: s.yol, ev: s.ev, cwd: s.cwd };
+  SON_TARAMA = s;
+  AYAR.yaz("sonKlasor", s.yol);
   $("pKlasor").value = s.yol;
+  $("ara").value = "";
   // yol cubugu (breadcrumb)
   const yc = $("yolCubugu"); yc.innerHTML = "";
   const parcalar = s.yol.split("/").filter(Boolean);
@@ -43,29 +55,37 @@ async function gozat(yol) {
     e.onclick = () => gozat(yolu); yc.appendChild(e);
     yc.appendChild(document.createTextNode("›"));
   });
-  // liste  (NOT: her zaman appendChild kullan; innerHTML += tiklama
-  // olaylarini siler ve boş klasorde ".." tiklanamaz hale gelirdi)
-  g.innerHTML = "";
-  if (s.ust) {
+  gezginCiz(s, "");
+}
+
+// Filtrelenebilir gezgin listesi (NOT: her zaman appendChild kullan; innerHTML +=
+// tiklama olaylarini siler ve boş klasorde ".." tiklanamaz hale gelirdi)
+function gezginCiz(s, filtre) {
+  const g = $("gezgin"); g.innerHTML = "";
+  const f = (filtre || "").toLowerCase();
+  const uyar = a => !f || a.toLowerCase().includes(f);
+  if (s.ust && !f) {
     const u = oge(IK_KLASOR, "..", "", "klasor ust"); u.onclick = () => gozat(s.ust);
     g.appendChild(u);
   }
-  s.klasorler.forEach(k => {
+  s.klasorler.filter(k => uyar(k.ad)).forEach(k => {
     const e = oge(IK_KLASOR, k.ad, sayimRozet(k), "klasor");
     e.onclick = () => gozat(k.yol);
     g.appendChild(e);
   });
-  s.dosyalar.forEach(f => {
-    const e = oge(IK_DOSYA, f.ad, `<span class="rozet">${f.tur}</span>`);
-    e.onclick = () => dosyaAc(f); g.appendChild(e);
+  s.dosyalar.filter(x => uyar(x.ad)).forEach(x => {
+    const e = oge(IK_DOSYA, x.ad, `<span class="rozet">${x.tur}</span>`);
+    e.onclick = () => dosyaAc(x); g.appendChild(e);
   });
-  if (!s.klasorler.length && !s.dosyalar.length) {
+  if (!g.children.length) {
     const bos = document.createElement("div");
     bos.className = "oge"; bos.style.color = "var(--metin2)";
-    bos.style.cursor = "default"; bos.textContent = "Bu klasorde DXF/G-Code yok";
+    bos.style.cursor = "default";
+    bos.textContent = f ? "Eslesme yok" : "Bu klasorde DXF/G-Code yok";
     g.appendChild(bos);
   }
 }
+$("ara").oninput = e => { if (SON_TARAMA) gezginCiz(SON_TARAMA, e.target.value); };
 // Alt klasor icerik sayaci: magenta T{gcode} (toolpath), sari V{dxf} (vektor).
 // Icinde yoksa bos birakilir.
 function sayimRozet(k) {
@@ -98,7 +118,9 @@ function dosyaAc(f) {
   if (varsa) { AKTIF = varsa.id; render(); return; }
   const doc = { id: ++sayac, yol: f.yol, ad: f.ad, tur: f.tur, durum: "yeni" };
   if (f.tur === "dxf")
-    doc.params = { bas_x: 0.75, serit_y: 0.5, node_tol: 1e-6, node_temiz: true };
+    doc.params = Object.assign(
+      { bas_x: 0.75, serit_y: 0.5, node_tol: 1e-6, node_temiz: true },
+      AYAR.al("dxfParams", {}));
   DOCS.push(doc); AKTIF = doc.id; render();
   yukle(doc);
 }
@@ -122,7 +144,9 @@ async function yukle(doc) {
     const g = await api("/api/gcode/yukle", { yol: doc.yol });
     doc.veri = g;
     if (g.guvenli) doc.gc = { bloklar: g.bloklar, sira: g.onerilen_sira.slice(),
-      gecmis: [], ileri: [], canli: true };
+      gecmis: [], ileri: [], canli: true,
+      tabAcik: AYAR.al("tabAcik", false), tabAdet: AYAR.al("tabAdet", 4),
+      tablar: null };
   }
   doc.durum = "hazir";
   if (AKTIF === doc.id) render();
@@ -185,6 +209,14 @@ function dxfIcerik(doc) {
         <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
         <button class="dugme" id="d_kaydet">Optimize DXF'i Kaydet</button>
       </div>
+      <div class="arac" style="margin-top:12px;align-items:center">
+        <div class="grup"><label>Nesting tabaka genisligi (0 = otomatik)</label>
+          <input type="text" class="alan kk" id="d_tabaka" value="0"></div>
+        <div class="grup"><label>Parca araligi</label>
+          <input type="text" class="alan kk" id="d_bosluk" value="5"></div>
+        <button class="dugme hayalet" id="d_nest">Yerlestir (Nesting)</button>
+        <div class="birim-cip" id="d_nestbilgi" style="display:none"></div>
+      </div>
       <div class="cipler">
         <div class="cip">Tasinan baslangic<b>${v.kaydirilan}</b></div>
         <div class="cip">Kaldirilan gereksiz node<b>${v.silinen_node}</b></div>
@@ -205,16 +237,31 @@ function dxfIcerik(doc) {
       </div>
     </div>`;
   // olaylar
+  const kaydetP = () => AYAR.yaz("dxfParams", p);
   setTimeout(() => {
-    $("d_basx").oninput = e => { p.bas_x = +e.target.value; $("d_basxv").textContent = p.bas_x; };
-    $("d_sery").oninput = e => { p.serit_y = +e.target.value; $("d_seryv").textContent = p.serit_y; };
-    $("d_tol").onchange = e => p.node_tol = parseFloat(e.target.value) || 1e-6;
-    $("d_temiz").onchange = e => p.node_temiz = e.target.checked;
+    $("d_basx").oninput = e => { p.bas_x = +e.target.value; $("d_basxv").textContent = p.bas_x; kaydetP(); };
+    $("d_sery").oninput = e => { p.serit_y = +e.target.value; $("d_seryv").textContent = p.serit_y; kaydetP(); };
+    $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
+    $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
     $("d_yeniden").onclick = () => yukle(doc);
     $("d_kaydet").onclick = async () => {
       const r = await api("/api/dxf/kaydet", { yol: doc.yol });
       $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`
         : `<span class="ok">Kaydedildi:</span> ${r.cikti}`;
+    };
+    $("d_nest").onclick = async () => {
+      $("d_durum").innerHTML = `<span class="yukleniyor"></span> Yerlestiriliyor…`;
+      const r = await api("/api/dxf/nest", { yol: doc.yol,
+        tabaka_genislik: parseFloat($("d_tabaka").value) || 0,
+        bosluk: parseFloat($("d_bosluk").value) || 5 });
+      if (r.hata) { $("d_durum").innerHTML = `<span class="uyari">${r.hata}</span>`; return; }
+      doc.veri.oncesi = r.oncesi; doc.veri.sonrasi = r.sonrasi;
+      doc.veri.riskli_handlelar = [];
+      dxfCiz(doc);
+      $("d_nestbilgi").style.display = "inline-block";
+      $("d_nestbilgi").textContent =
+        `${r.parca_sayisi} parca · tabaka ${r.tabaka[0].toFixed(0)}×${r.tabaka[1].toFixed(0)} · cevre ${r.cevre_korundu?'korundu':'UYARI'}`;
+      $("d_durum").innerHTML = `<span class="ok">Yerlestirildi:</span> ${r.cikti}`;
     };
   }, 0);
   return el;
@@ -249,10 +296,17 @@ function gcodeIcerik(doc) {
         <span class="ayrac"></span>
         <label class="anahtar"><input type="checkbox" id="g_canli" ${doc.gc.canli?"checked":""}>
           <span class="kutu"></span> Canli onizleme</label>
+        <span class="ayrac"></span>
+        <label class="anahtar"><input type="checkbox" id="g_tab" ${doc.gc.tabAcik?"checked":""}>
+          <span class="kutu"></span> Koprü</label>
+        <input type="text" class="alan kk" id="g_tabadet" value="${doc.gc.tabAdet||4}"
+               title="Kontur basina koprü sayisi" style="width:52px">
         <button class="dugme hayalet kucuk" id="g_goster">Goster</button>
         <div style="flex:1"></div>
+        <span class="birim-cip">${g.birim ? g.birim : "birim?"}</span>
         <button class="dugme" id="g_kaydet">Kaydet (.tap)</button>
       </div>
+      <div class="cipler" id="g_karsilastir"></div>
       <div class="gc-govde">
         <div>
           <div class="pbaslik" style="margin-bottom:8px">Kesim sirasi — surukleyerek tasi</div>
@@ -273,10 +327,36 @@ function gcodeIcerik(doc) {
     $("g_geri").onclick = () => { gcGeri(doc); };
     $("g_ileri").onclick = () => { gcIleri(doc); };
     $("g_canli").onchange = e => { doc.gc.canli = e.target.checked; if (e.target.checked) gcCiz(doc); };
+    $("g_tab").onchange = async e => { doc.gc.tabAcik = e.target.checked;
+      AYAR.yaz("tabAcik", e.target.checked); await gcTablariGetir(doc); gcCiz(doc, true); };
+    $("g_tabadet").onchange = async e => { doc.gc.tabAdet = parseInt(e.target.value) || 4;
+      AYAR.yaz("tabAdet", doc.gc.tabAdet); if (doc.gc.tabAcik) { await gcTablariGetir(doc); gcCiz(doc, true); } };
     $("g_goster").onclick = () => gcCiz(doc, true);
     $("g_kaydet").onclick = () => gcKaydet(doc);
+    gcKarsilastirCiz(doc);
   }, 0);
   return el;
+}
+
+// boşta-yol karsilastirma cipleri (en iyi vurgulanir, tiklayinca uygular)
+function gcKarsilastirCiz(doc) {
+  const kap = $("g_karsilastir"); if (!kap) return;
+  const k = doc.veri.karsilastir; if (!k || !k.modlar) { kap.innerHTML = ""; return; }
+  const adlar = { "sol-alt": "Sol-alt→sağ-üst", "serpantin": "Serpantin", "engel": "Engel" };
+  const birim = k.birim || "";
+  kap.innerHTML = `<div class="cip">Boşta yol (kısa = iyi)</div>` +
+    Object.keys(k.modlar).map(m =>
+      `<div class="cip mod-cip ${m===k.en_iyi?'eniyi':''}" data-mod="${m}">${adlar[m]}
+        <b>${k.modlar[m].toFixed(1)} ${birim}</b></div>`).join("");
+  kap.querySelectorAll(".mod-cip").forEach(c =>
+    c.onclick = () => gcSirala(doc, c.dataset.mod));
+}
+
+async function gcTablariGetir(doc) {
+  if (!doc.gc.tabAcik) { doc.gc.tablar = null; return; }
+  const r = await api("/api/gcode/tablar", { yol: doc.yol, sira: doc.gc.sira,
+    adet: doc.gc.tabAdet || 4 });
+  doc.gc.tablar = r.tablar || null;
 }
 
 function gcAnlik(doc){ doc.gc.gecmis.push(doc.gc.sira.slice()); doc.gc.ileri = []; }
@@ -311,6 +391,7 @@ async function gcKaydet(doc) {
 
 async function gcCiz(doc, zorla) {
   if (!zorla && !doc.gc.canli) return;
+  if (doc.gc.tabAcik) await gcTablariGetir(doc);   // sira ile hizali tut
   const dv = await api("/api/gcode/dogrula", { yol: doc.yol, sira: doc.gc.sira });
   const ihl = new Set(); (dv.ihlaller || []).forEach(([a, b]) => { ihl.add(a); ihl.add(b); });
   gcListe(doc, ihl); gcSvg(doc);
@@ -361,6 +442,13 @@ function gcSvg(doc) {
     const [x1, y1] = merkez(doc.gc.sira[i]), [x2, y2] = merkez(doc.gc.sira[i + 1]);
     ekle(svg, "line", { x1, y1, x2, y2, stroke: "var(--acc)", "stroke-width": 1.3,
       opacity: .5, "marker-end": "url(#ok)" });
+  }
+  // koprü (tab) isaretleri
+  if (doc.gc.tabAcik && doc.gc.tablar) {
+    doc.gc.tablar.forEach(liste => (liste || []).forEach(([x, y]) => {
+      const [px, py] = T(x, y);
+      ekle(svg, "circle", { cx: px, cy: py, r: 4, class: "tab-nokta" });
+    }));
   }
   doc.gc.sira.forEach((id, poz) => {
     const [cx, cy] = merkez(id);
@@ -415,9 +503,85 @@ async function topluIsle() {
     klasor: $("pKlasor").value.trim(), proje_ad: $("pAd").value.trim() || "proje",
     onizleme: $("pOnizleme").checked, opts: { gcode_mod: $("pMod").value } });
   if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`; return; }
-  let m = `<span class="ok">${s.sayi} dosya islendi.</span> Cikti: ${s.dizin}`;
-  d.innerHTML = m;
+  // birlesik sonuc tablosu
+  let t = `<div class="ok" style="margin-bottom:6px">${s.sayi} dosya islendi · Cikti: ${s.dizin}</div>`;
+  t += `<table class="ozet-tablo"><tr><th>Dosya</th><th>Tur</th><th>Sonuc</th></tr>`;
+  (s.gunluk || []).forEach(g => {
+    const ad = (g.giris || "").split("/").pop();
+    let sonuc;
+    if (g.hata) sonuc = `<span class="uyari">${g.hata}</span>`;
+    else if (g.tur === "dxf") sonuc = `node -${g.silinen_node}, tasinan ${g.kaydirilan}, ` +
+      `butunluk ${g.dogrulama ? "<span class='ok'>OK</span>" : "<span class='uyari'>UYARI</span>"}`;
+    else sonuc = `${g.blok} blok (${g.mod})`;
+    t += `<tr><td>${ad}</td><td>${g.tur}</td><td>${sonuc}</td></tr>`;
+  });
+  t += `</table>`;
+  d.innerHTML = t;
 }
 
+// ===================== toplu kaydet =====================
+async function tumKaydet() {
+  let n = 0;
+  for (const d of DOCS) {
+    if (d.durum !== "hazir") continue;
+    if (d.tur === "dxf") { const r = await api("/api/dxf/kaydet", { yol: d.yol });
+      if (!r.hata) n++; }
+    else if (d.gc) { const r = await api("/api/gcode/kaydet", { yol: d.yol, sira: d.gc.sira });
+      if (!r.hata) n++; }
+  }
+  bildir(n ? `${n} dosya kaydedildi` : "Kaydedilecek acik dosya yok");
+}
+$("tumKaydetBtn").onclick = tumKaydet;
+
+// ===================== bildirim (toast) =====================
+function bildir(msg, hata) {
+  let t = document.getElementById("toast");
+  if (!t) { t = document.createElement("div"); t.id = "toast"; document.body.appendChild(t); }
+  t.textContent = msg; t.className = "toast" + (hata ? " hata" : ""); t.style.opacity = "1";
+  clearTimeout(t._t); t._t = setTimeout(() => { t.style.opacity = "0"; }, 2600);
+}
+
+// ===================== klavye kisayollari =====================
+document.addEventListener("keydown", e => {
+  const meta = e.ctrlKey || e.metaKey;
+  if (!meta) return;
+  const doc = aktifDoc();
+  const k = e.key.toLowerCase();
+  if (k === "s" && e.shiftKey) { e.preventDefault(); tumKaydet(); return; }
+  if (k === "s") { e.preventDefault();
+    if (doc && doc.tur === "dxf") api("/api/dxf/kaydet", { yol: doc.yol })
+      .then(r => bildir(r.hata || "Kaydedildi: " + r.cikti, !!r.hata));
+    else if (doc && doc.gc) gcKaydet(doc);
+    return; }
+  if (k === "w" && AKTIF != null) { e.preventDefault(); docKapat(AKTIF, { stopPropagation() {} }); return; }
+  if (doc && doc.tur === "gcode" && doc.gc) {
+    if (k === "z") { e.preventDefault(); gcGeri(doc); return; }
+    if (k === "y") { e.preventDefault(); gcIleri(doc); return; }
+  }
+  if (/^[1-9]$/.test(e.key)) { const i = +e.key - 1;
+    if (DOCS[i]) { e.preventDefault(); AKTIF = DOCS[i].id; render(); } }
+});
+
+// ===================== surukle-birak yukleme =====================
+(function () {
+  const birak = $("birak");
+  let sayi = 0;
+  const dosyaVar = e => e.dataTransfer &&
+    Array.from(e.dataTransfer.types || []).includes("Files");
+  window.addEventListener("dragenter", e => {
+    if (dosyaVar(e)) { sayi++; birak.classList.remove("gizli"); } });
+  window.addEventListener("dragover", e => { if (dosyaVar(e)) e.preventDefault(); });
+  window.addEventListener("dragleave", () => { sayi--; if (sayi <= 0) birak.classList.add("gizli"); });
+  window.addEventListener("drop", async e => {
+    e.preventDefault(); sayi = 0; birak.classList.add("gizli");
+    for (const file of Array.from(e.dataTransfer.files || [])) {
+      const b64 = await new Promise(res => { const fr = new FileReader();
+        fr.onload = () => res(fr.result.split(",")[1]); fr.readAsDataURL(file); });
+      const r = await api("/api/yukle", { ad: file.name, b64 });
+      if (r.hata) bildir(r.hata, true); else dosyaAc(r);
+    }
+  });
+})();
+
 // ===================== baslangic =====================
-gozat(null);
+gozat(AYAR.al("sonKlasor", null));

@@ -20,15 +20,23 @@ Tarayicida http://127.0.0.1:8000 acilir. Arayuz:
   * Proje: bir klasor verip icindeki her seyi otomatik, ayri dizinlere isle.
 """
 
+import base64
 import json
 import os
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import ezdxf
+
 from . import dxf_processor as D
 from . import gcode as GC
+from . import geometry as GEO
+from . import nesting as NEST
 from . import project as P
+
+_YUKLEME_DIZIN = os.path.join(tempfile.gettempdir(), "cnc_assistant_yukleme")
 
 WEB_DIZIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -244,7 +252,33 @@ def api_gcode_yukle(veri):
     onerilen = _sirala_idler(yol, "sol-alt")
     return {"guvenli": True, "uyarilar": prog.uyarilar,
             "sabit_son": prog.sabit_son is not None,
+            "birim": prog.birim,
+            "karsilastir": prog.karsilastir(),
             "bloklar": bloklar, "onerilen_sira": onerilen}
+
+
+def api_gcode_karsilastir(veri):
+    yol = veri["yol"]
+    if yol not in _DURUM:
+        return {"hata": "Once dosyayi yukleyin."}
+    return _DURUM[yol]["prog"].karsilastir()
+
+
+def api_gcode_tablar(veri):
+    """Verilen sira icin her blogun konturuna KOPRU (tab) konumlarini uretir.
+    Kesim geometrisini degistirmez; sadece 'nereye koprü' bilgisi."""
+    yol = veri["yol"]
+    if yol not in _DURUM:
+        return {"hata": "Once dosyayi yukleyin."}
+    adet = int(veri.get("adet", 4))
+    d = _DURUM[yol]
+    sira = veri.get("sira") or list(range(len(d["orijinal"])))
+    tablar = []
+    for i in sira:
+        kontur = GC.blok_yol(d["orijinal"][i])
+        pts = GEO.tab_pozisyonlari(kontur, adet=adet) if len(kontur) >= 3 else []
+        tablar.append([[round(x, 4), round(y, 4)] for x, y, _ in pts])
+    return {"tablar": tablar}
 
 
 def api_gcode_sirala(veri):
@@ -275,6 +309,48 @@ def api_gcode_kaydet(veri):
             "bosta_yol": d["prog"].bosta_yol()}
 
 
+def api_dxf_nest(veri):
+    """DXF parcalarini tabakaya yeniden yerlestirir (nesting) ve kaydeder."""
+    yol = veri["yol"]
+    if not os.path.isfile(yol):
+        return {"hata": f"Dosya yok: {yol}"}
+    doc = ezdxf.readfile(yol)
+    oncesi = D.baslangic_noktalari_ve_konturlar(doc)
+    r = NEST.nest_doc(doc,
+                      tabaka_genislik=float(veri.get("tabaka_genislik", 0)) or None,
+                      bosluk=float(veri.get("bosluk", 5.0)),
+                      kenar=float(veri.get("kenar", 5.0)))
+    if r.get("hata"):
+        return r
+    kok, _ = os.path.splitext(yol)
+    cikti = veri.get("cikti") or f"{kok}_nested.dxf"
+    doc.saveas(cikti)
+    _DXF_DOC[cikti] = doc
+    sonrasi = D.baslangic_noktalari_ve_konturlar(doc)
+    return {"cikti": cikti, "parca_sayisi": r["parca_sayisi"],
+            "tabaka": r["tabaka"], "cevre_korundu": r["cevre_korundu"],
+            "oncesi": [_varlik_json(v) for v in oncesi],
+            "sonrasi": [_varlik_json(v) for v in sonrasi]}
+
+
+def api_yukle(veri):
+    """Tarayicidan surukle-birak ile gonderilen dosyayi sunucuya yazar."""
+    ad = os.path.basename(veri.get("ad", "dosya"))
+    b64 = veri.get("b64", "")
+    os.makedirs(_YUKLEME_DIZIN, exist_ok=True)
+    hedef = os.path.join(_YUKLEME_DIZIN, ad)
+    try:
+        with open(hedef, "wb") as f:
+            f.write(base64.b64decode(b64))
+    except Exception as e:      # noqa: BLE001
+        return {"hata": f"Yukleme hatasi: {e}"}
+    uz = os.path.splitext(ad)[1].lower()
+    tur = "dxf" if uz == ".dxf" else "gcode" if uz in P.GCODE_UZANTILAR else None
+    if not tur:
+        return {"hata": "Desteklenmeyen dosya turu (DXF veya G-Code olmali)."}
+    return {"yol": hedef, "ad": ad, "tur": tur}
+
+
 def api_proje_klasor(veri):
     klasor = veri["klasor"]
     if not os.path.isdir(klasor):
@@ -293,10 +369,14 @@ API = {
     "/api/gozat": api_gozat,
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
+    "/api/dxf/nest": api_dxf_nest,
     "/api/gcode/yukle": api_gcode_yukle,
     "/api/gcode/sirala": api_gcode_sirala,
     "/api/gcode/dogrula": api_gcode_dogrula,
     "/api/gcode/kaydet": api_gcode_kaydet,
+    "/api/gcode/karsilastir": api_gcode_karsilastir,
+    "/api/gcode/tablar": api_gcode_tablar,
+    "/api/yukle": api_yukle,
     "/api/proje/klasor": api_proje_klasor,
 }
 
@@ -319,6 +399,10 @@ class Isleyici(BaseHTTPRequestHandler):
 
     def do_GET(self):
         yol = self.path.split("?", 1)[0]
+        if yol == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
+            return
         if yol == "/":
             yol = "/index.html"
         dosya = os.path.join(WEB_DIZIN, yol.lstrip("/"))

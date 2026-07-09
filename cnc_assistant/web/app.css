@@ -72,6 +72,8 @@ body{
   display:flex;flex-wrap:wrap;gap:3px;align-items:center}
 .yol-cubugu .p{cursor:pointer;padding:2px 5px;border-radius:6px}
 .yol-cubugu .p:hover{background:var(--cizgi);color:var(--metin)}
+.ara-kutu{padding:0 12px 8px}
+.ara-kutu .alan{padding:7px 10px;font-size:12.5px}
 .gezgin{flex:1;overflow:auto;padding:4px 8px}
 .oge{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
   cursor:pointer;font-size:13px;transition:background .12s}
@@ -211,3 +213,34 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .satirici{display:flex!important;align-items:center;gap:8px;margin-top:12px}
 .pencere-alt{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}
 .gizli{display:none!important}
+
+/* surukle-birak katmani */
+.birak{position:fixed;inset:0;z-index:60;background:color-mix(in srgb,var(--acc) 12%,rgba(0,0,0,.45));
+  display:grid;place-items:center;backdrop-filter:blur(3px)}
+.birak-ic{border:2px dashed var(--acc);border-radius:var(--r-lg);padding:48px 64px;
+  background:var(--yuzey);color:var(--metin);font-size:20px;font-weight:600;text-align:center;
+  box-shadow:var(--golge)}
+.birak-ic span{font-size:13px;color:var(--metin2);font-weight:400}
+
+/* birim / bilgi cipleri */
+.birim-cip{font-size:11px;padding:3px 9px;border-radius:20px;border:1px solid var(--cizgi);
+  color:var(--metin2);font-weight:600}
+.mod-cip{cursor:pointer;transition:border-color .12s}
+.mod-cip:hover{border-color:var(--acc)}
+.mod-cip.eniyi{border-color:var(--ok);color:var(--ok)}
+.mod-cip.eniyi b{color:var(--ok)}
+
+/* tab (koprü) isareti aciklamasi */
+.tab-nokta{fill:#ff9500;stroke:var(--yuzey);stroke-width:1.5}
+
+/* toast bildirimi */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+  background:var(--metin);color:var(--yuzey);padding:11px 20px;border-radius:12px;
+  font-size:13px;font-weight:600;box-shadow:var(--golge);opacity:0;transition:opacity .25s;
+  z-index:80;pointer-events:none}
+.toast.hata{background:var(--uyari);color:#fff}
+
+/* birlesik sonuc tablosu */
+.ozet-tablo{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+.ozet-tablo th,.ozet-tablo td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--cizgi)}
+.ozet-tablo th{color:var(--metin2);font-weight:600}

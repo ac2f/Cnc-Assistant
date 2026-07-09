@@ -214,6 +214,64 @@ def en_uygun_duz_segment_ekleme_noktasi(pts, hedef):
     return en_iyi
 
 
+def kontur_uzunlugu(kontur, kapali=True):
+    n = len(kontur)
+    if n < 2:
+        return 0.0
+    L = 0.0
+    rng = range(n) if kapali else range(n - 1)
+    for i in rng:
+        a, b = kontur[i], kontur[(i + 1) % n]
+        L += math.hypot(b[0] - a[0], b[1] - a[1])
+    return L
+
+
+def tab_pozisyonlari(kontur, adet=4, kose_kacinma=0.12):
+    """Kapali bir kontur uzerinde, KOPRU (tab) yerlestirmek icin esit araliklı
+    nokta konumlari doner. Koseler (keskin donusler) civarindan kacinilir;
+    boylece kesim sonrasi parca yerinde kalir. GEOMETRIYI DEGISTIRMEZ - yalnizca
+    'nereye koprü konmali' bilgisini uretir (ArtCAM'de/elde koprü buraya konur).
+
+    Doner: [(x, y, aci_derece), ...]  (aci = konturun o noktadaki teget acisi)
+    """
+    n = len(kontur)
+    if n < 2 or adet < 1:
+        return []
+    toplam = kontur_uzunlugu(kontur, kapali=True)
+    if toplam <= 1e-9:
+        return []
+    # kenar uzunluklari ve kumulatif
+    kenarlar = []
+    for i in range(n):
+        a, b = kontur[i], kontur[(i + 1) % n]
+        kenarlar.append((a, b, math.hypot(b[0] - a[0], b[1] - a[1])))
+
+    def nokta_at(mesafe):
+        d = mesafe % toplam
+        for a, b, L in kenarlar:
+            if d <= L or L <= 1e-12:
+                t = 0.0 if L <= 1e-12 else d / L
+                x = a[0] + (b[0] - a[0]) * t
+                y = a[1] + (b[1] - a[1]) * t
+                aci = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+                # koseye cok yakinsa kenarin ortasina dogru it
+                yakin_kose = min(t, 1 - t) * L
+                return (x, y, aci), yakin_kose, L
+            d -= L
+        return (kontur[0][0], kontur[0][1], 0.0), 0.0, 0.0
+
+    sonuc = []
+    for i in range(adet):
+        hedef = toplam * (i + 0.5) / adet
+        (x, y, aci), yakin, L = nokta_at(hedef)
+        # kose civarindaysa biraz kaydir (kenarin ortasina)
+        if L > 1e-9 and yakin < kose_kacinma * L:
+            hedef += (kose_kacinma * L)
+            (x, y, aci), _, _ = nokta_at(hedef)
+        sonuc.append((x, y, aci))
+    return sonuc
+
+
 def baslangic_indeksi_belirle(pts, **kw):
     """Hedef noktayi belirler ve baslangic vertex'inin indeksini doner.
 

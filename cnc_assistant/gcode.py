@@ -98,6 +98,73 @@ def blok_polygon(blok):
     return pts
 
 
+def blok_yol(blok, yay_bolut=14):
+    """Bloktaki hareketleri (G0/G1 dogru + G2/G3 YAY interpolasyonu ile)
+    gercek takim yolu noktalarina cevirir. Onizlemede yaylar chord yerine
+    gercek egri olarak cizilir. I/J (merkez) ve R (yaricap) desteklenir."""
+    pts = []
+    x = y = None
+    g = None
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if not ("X" in w or "Y" in w):
+            continue
+        nx = w.get("X", x if x is not None else 0.0)
+        ny = w.get("Y", y if y is not None else 0.0)
+        if x is None or y is None:
+            x, y = nx, ny
+            pts.append((x, y))
+            continue
+        if g in (2.0, 3.0) and ("I" in w or "J" in w or "R" in w):
+            pts.extend(_yay_noktalari(x, y, nx, ny, w, g, yay_bolut)[1:])
+        else:
+            pts.append((nx, ny))
+        x, y = nx, ny
+    return pts
+
+
+def _yay_noktalari(x0, y0, x1, y1, w, g, bolut):
+    """G2/G3 yayini nokta dizisine acar."""
+    if "I" in w or "J" in w:
+        cx, cy = x0 + w.get("I", 0.0), y0 + w.get("J", 0.0)
+    else:                                   # R modu
+        r = w["R"]
+        mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+        dx, dy = x1 - x0, y1 - y0
+        d = math.hypot(dx, dy)
+        if d < 1e-9 or abs(r) < d / 2.0:
+            return [(x0, y0), (x1, y1)]
+        h = math.sqrt(max(r * r - (d / 2.0) ** 2, 0.0))
+        sgn = 1 if ((g == 3.0) == (r > 0)) else -1
+        cx = mx + sgn * h * (-dy / d)
+        cy = my + sgn * h * (dx / d)
+    r = math.hypot(x0 - cx, y0 - cy)
+    a0 = math.atan2(y0 - cy, x0 - cx)
+    a1 = math.atan2(y1 - cy, x1 - cx)
+    if g == 2.0:                            # saat yonu (azalan aci)
+        while a1 >= a0:
+            a1 -= 2 * math.pi
+    else:                                   # saat yonu tersi (artan aci)
+        while a1 <= a0:
+            a1 += 2 * math.pi
+    n = max(2, int(abs(a1 - a0) / (2 * math.pi) * (bolut * 4)) + 1)
+    return [(cx + r * math.cos(a0 + (a1 - a0) * i / n),
+             cy + r * math.sin(a0 + (a1 - a0) * i / n)) for i in range(n + 1)]
+
+
+def birim_tespit(satirlar):
+    """G20 (inch) / G21 (mm) tespit eder. Bulunamazsa None."""
+    for s in satirlar:
+        temiz = re.sub(r"\(.*?\)", "", s).split(";", 1)[0]
+        if re.search(r"\bG20\b", temiz):
+            return "inch"
+        if re.search(r"\bG21\b", temiz):
+            return "mm"
+    return None
+
+
 def _poligon_merkez(poly):
     if not poly:
         return (0.0, 0.0)
@@ -317,6 +384,7 @@ class GCodeProgram:
         with open(yol, "r", encoding="utf-8", errors="replace") as f:
             self.satirlar = f.read().splitlines()
         self.guvenli = not g91_var_mi(self.satirlar)
+        self.birim = birim_tespit(self.satirlar)     # "mm" | "inch" | None
         self.header = []
         self.bloklar = []
         self.footer = []
@@ -387,10 +455,22 @@ class GCodeProgram:
             bx, by = blok_bas_xy(blok)
             box = blok_bbox(blok)
             out.append({"sira": n, "x": bx, "y": by, "bbox": box,
-                        "poligon": blok_polygon(blok),
+                        "poligon": blok_yol(blok),    # yay-duyarli (onizleme)
                         "derinlik": derinlik[n - 1],
                         "satir_sayisi": len(blok)})
         return out
+
+    def karsilastir(self):
+        """Her siralama modunun toplam BOSTA (kesim disi) tasima mesafesini
+        hesaplar ve en dusuk olani onerir. Mevcut sirayi bozmaz."""
+        sonuc = {}
+        for mod in ("sol-alt", "serpantin", "engel"):
+            sirali = sirala(self.bloklar, mod)
+            if self.sabit_son:
+                sirali = sirali + [self.sabit_son]
+            sonuc[mod] = toplam_bosta_yol(sirali)
+        en_iyi = min(sonuc, key=sonuc.get) if sonuc else None
+        return {"modlar": sonuc, "en_iyi": en_iyi, "birim": self.birim}
 
     def icerme_ihlalleri(self):
         """Mevcut sirada icerme kuralinin ihlal edildigi (bir blok, kendisini

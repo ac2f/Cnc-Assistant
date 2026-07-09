@@ -151,7 +151,26 @@ python main.py --web           # http://127.0.0.1:8000 acilir
 
 Arayuz sade, modern bir tasarima sahiptir (acik/koyu tema otomatik; sag ustteki
 ◐ ile degistirilebilir) ve saf HTML/JS'tir (SVG ile cizim) — onizlemeler
-**anlik** ve tarayici tarafinda uretilir.
+**anlik** ve tarayici tarafinda uretilir. Tarayici **otomatik acilmaz** (adres
+konsola yazilir); istenirse `--web --tarayici-ac`.
+
+**v1.2 yenilikleri (hepsi arayuzde):**
+- **Dosya gezgininde arama/filtre** ve alt klasorler icin **icerik sayaci**
+  (magenta `T{gcode}` toolpath + sari `V{dxf}` vektor; bossa gizli).
+- **Cok sekmeli calisma** + **surukle-birak** ile dosya yukleme.
+- **Gercek takim yolu onizlemesi:** G2/G3 **yaylar** chord degil gercek egri
+  cizilir.
+- **Koprü (tab) isaretleme:** kontur basina esit araliklı, koseden kacinan
+  koprü konumlari (turuncu) — kesim geometrisi degismez, sadece "nereye koprü"
+  gosterilir (ArtCAM'de/elde koprü buraya konur).
+- **Yerlesim (nesting):** parcalari tabakaya raf algoritmasiyla dizer; parca
+  yalnizca otelenir, sekil/olcu %100 korunur.
+- **Boşta-yol karsilastirmasi:** her siralama modunun tasima mesafesi cip olarak
+  gosterilir, en kisa olan yesil vurgulanir (tiklayinca uygulanir).
+- **Birim gostergesi** (mm/inch, G20/G21'den), **birlesik toplu-isleme
+  tablosu**, **Tumunu Kaydet**, **klavye kisayollari** (Ctrl+S, Ctrl+Shift+S,
+  Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
+  son klasor - localStorage).
 
 - **Dosya gezgini (sol kenar):** klasorler arasinda gezin (ust yol cubugu /
   "Ev" / "Proje" kisayollari), DXF/G-Code dosyalarina tiklayarak acin.
