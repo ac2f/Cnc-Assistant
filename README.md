@@ -179,6 +179,18 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
+**v1.6 yenilikleri:**
+- **Vektorel PDF disari aktarma:** DXF onizlemesinde "PDF (vektorel)" butonu
+  ONCESI+SONRASI panellerini gercek bezier egrileriyle tek PDF olarak indirir
+  (sonsuz yaklastirmada net).
+- **Gelismis Nesting sekmesi** (ust bardaki ⊞ Nesting): gercek-sekil (raster)
+  yerlesim. Parcalar DXF'ten (her kapali kontur) veya olcu vererek
+  (dikdortgen/daire) + ADET; tabakalar **coklu** ve **sabit dikdortgen/daire ya
+  da bir DXF'ten alinan HERHANGI bir sekil** (ArtCAM'in aksine dikdortgen sart
+  degil). Ayarlar: **bicak payi/kerf · parca boslugu · kenar boslugu ·
+  cozunurluk · rotasyon** — hepsi acikli (? Aciklama). Sonuc tabaka basi
+  onizlenir (doluluk %), DXF + vektorel PDF olarak disari aktarilir.
+
 **v1.5 yenilikleri:**
 - **Vektorel onizleme:** web onizlemeleri artik flatten edilmis cizgi yerine
   **gercek egri komutlariyla** (SVG bezier `C`/`Q`) ciziliyor. DXF yaylari/

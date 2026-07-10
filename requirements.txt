@@ -1,5 +1,6 @@
 # Zorunlu bagimliliklar
 ezdxf>=1.1,<2.0        # DXF okuma/yazma
+numpy>=1.20           # gelismis (raster) nesting motoru
 
 # Istege bagli (onizleme/gorsel uretimi icin)
-matplotlib>=3.5        # ONCESI/SONRASI ve G-Code sira PNG onizlemeleri
+matplotlib>=3.5        # ONCESI/SONRASI + G-Code PNG onizleme ve vektorel PDF

@@ -256,6 +256,35 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .tuval:active{cursor:grabbing}
 .zoom-ipuc{font-size:11px;color:var(--metin2);margin-top:6px}
 
+/* ===== nesting paneli ===== */
+.nest-panel{position:fixed;inset:0;z-index:70;background:var(--bg);
+  display:flex;flex-direction:column;overflow:hidden}
+.nest-ust{display:flex;align-items:center;gap:12px;padding:12px 20px;
+  background:var(--yuzey);border-bottom:1px solid var(--cizgi)}
+.nest-govde{flex:1;display:grid;grid-template-columns:400px 1fr;gap:16px;
+  padding:16px;overflow:hidden}
+@media(max-width:900px){.nest-govde{grid-template-columns:1fr;overflow:auto}}
+.nest-sol{overflow:auto;display:flex;flex-direction:column;gap:14px}
+.nest-sag{overflow:hidden}
+.nest-liste{margin-top:10px;display:flex;flex-direction:column;gap:6px;
+  max-height:230px;overflow:auto}
+.nest-oge{display:flex;align-items:center;gap:8px;padding:7px 10px;
+  border:1px solid var(--cizgi);border-radius:9px;background:var(--yuzey2);font-size:12.5px}
+.nest-oge .isim{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.nest-oge input{width:56px;background:var(--yuzey);color:var(--metin);
+  border:1px solid var(--cizgi);border-radius:6px;padding:4px 6px;font-size:12px}
+.nest-oge .sil{cursor:pointer;color:var(--metin2);font-weight:700;padding:0 4px}
+.nest-oge .sil:hover{color:var(--uyari)}
+.nest-ayar{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.nest-ayar .grup label{font-size:11.5px;color:var(--metin2);margin-bottom:3px;display:block}
+.ipuc-nokta{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;
+  background:var(--acc);color:#fff;font-size:12px;cursor:pointer;margin-left:6px;vertical-align:1px}
+.nest-tab{font-size:12px;padding:5px 11px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--cizgi);background:var(--yuzey2);color:var(--metin2)}
+.nest-tab.aktif{background:var(--acc);color:#fff;border-color:var(--acc)}
+.yardim p{font-size:13px;margin:8px 0;color:var(--metin)}
+.yardim b{color:var(--acc)}
+
 /* toast bildirimi */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
   background:var(--metin);color:var(--yuzey);padding:11px 20px;border-radius:12px;

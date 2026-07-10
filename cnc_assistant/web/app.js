@@ -240,6 +240,7 @@ function dxfIcerik(doc) {
         <label class="anahtar"><input type="checkbox" id="d_temiz" ${p.node_temiz?"checked":""}>
           <span class="kutu"></span> Node temizligi</label>
         <div style="flex:1"></div>
+        <button class="dugme hayalet" id="d_pdf">PDF (vektorel)</button>
         <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
         <button class="dugme" id="d_kaydet">Optimize DXF'i Kaydet</button>
       </div>
@@ -280,6 +281,14 @@ function dxfIcerik(doc) {
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
     $("d_yeniden").onclick = () => yukle(doc);
+    $("d_pdf").onclick = async () => {
+      $("d_durum").innerHTML = `<span class="yukleniyor"></span> PDF uretiliyor…`;
+      const r = await api("/api/dxf/pdf", { yol: doc.yol, destek_yonu: p.destek,
+        node_tol: p.node_tol, node_temizle: p.node_temiz });
+      if (r.hata) { $("d_durum").innerHTML = `<span class="uyari">${r.hata}</span>`; return; }
+      $("d_durum").innerHTML = `<span class="ok">PDF hazir:</span> ${r.pdf} — indiriliyor…`;
+      window.location.href = r.indir;      // ONCESI+SONRASI vektorel PDF indir
+    };
     $("d_kaydet").onclick = async () => {
       const r = await api("/api/dxf/kaydet", { yol: doc.yol });
       $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`
@@ -750,6 +759,157 @@ document.addEventListener("keydown", e => {
     }
   });
 })();
+
+// ===================== NESTING =====================
+let NEST = { parcalar: [], tabakalar: [], sonuc: null, aktif: 0 };
+
+$("nestBtn").onclick = () => { $("nestPanel").classList.remove("gizli");
+  nestParcaCiz(); nestTabakaCiz(); };
+function nestKapat(){ $("nestPanel").classList.add("gizli"); }
+function nestYardim(){ $("nestYardimPerde").classList.remove("gizli"); }
+function nestYardimKapat(){ $("nestYardimPerde").classList.add("gizli"); }
+
+function dikdortgenPoly(w, h){ return [[0,0],[w,0],[w,h],[0,h]]; }
+function dairePoly(r, n){ n=n||64; const p=[]; for(let i=0;i<n;i++){
+  const a=2*Math.PI*i/n; p.push([r+r*Math.cos(a), r+r*Math.sin(a)]); } return p; }
+
+// --- parca ekleme ---
+function nestDikdortgenParca(){
+  const s=prompt("Dikdortgen parca — en x boy x adet (mm), orn: 100 50 4","100 50 1");
+  if(!s) return; const [w,h,n]=s.split(/[x ,]+/).map(Number);
+  if(!w||!h) return;
+  NEST.parcalar.push({id:"dik"+(++sayac), ad:`Dikdortgen ${w}×${h}`,
+    poly:dikdortgenPoly(w,h), adet:n||1, w, h}); nestParcaCiz();
+}
+function nestDaireParca(){
+  const s=prompt("Daire parca — cap x adet (mm), orn: 40 6","40 1");
+  if(!s) return; const [d,n]=s.split(/[x ,]+/).map(Number); if(!d) return;
+  NEST.parcalar.push({id:"dai"+(++sayac), ad:`Daire Ø${d}`,
+    poly:dairePoly(d/2), adet:n||1, w:d, h:d}); nestParcaCiz();
+}
+$("nestParcaDosya").onchange = async e => {
+  const f=e.target.files[0]; if(!f) return;
+  const b64=await dosyaB64(f); const u=await api("/api/yukle",{ad:f.name,b64});
+  if(u.hata){ bildir(u.hata,true); return; }
+  const r=await api("/api/nest/parcalar_dxf",{yol:u.yol});
+  if(r.hata){ bildir(r.hata,true); return; }
+  (r.parcalar||[]).forEach(p=>NEST.parcalar.push({...p}));
+  bildir(`${(r.parcalar||[]).length} parca eklendi`); nestParcaCiz();
+  e.target.value="";
+};
+function dosyaB64(f){ return new Promise(res=>{ const fr=new FileReader();
+  fr.onload=()=>res(fr.result.split(",")[1]); fr.readAsDataURL(f); }); }
+
+function nestParcaCiz(){
+  const k=$("nestParcaListe"); k.innerHTML="";
+  if(!NEST.parcalar.length){ k.innerHTML='<div class="nest-oge">Henuz parca yok</div>'; return; }
+  NEST.parcalar.forEach((p,i)=>{
+    const d=document.createElement("div"); d.className="nest-oge";
+    d.innerHTML=`<span class="isim">${p.ad||p.id}</span>
+      <span style="color:var(--metin2);font-size:11px">adet</span>
+      <input type="number" min="1" value="${p.adet}">
+      <span class="sil">×</span>`;
+    d.querySelector("input").onchange=e=>p.adet=parseInt(e.target.value)||1;
+    d.querySelector(".sil").onclick=()=>{ NEST.parcalar.splice(i,1); nestParcaCiz(); };
+    k.appendChild(d);
+  });
+}
+
+// --- tabaka ekleme ---
+function nestDikdortgenTabaka(){
+  const s=prompt("Dikdortgen tabaka — en x boy (mm), orn: 1500 3000","1220 2440");
+  if(!s) return; const [w,h]=s.split(/[x ,]+/).map(Number); if(!w||!h) return;
+  NEST.tabakalar.push({ad:`Tabaka ${w}×${h}`, poly:dikdortgenPoly(w,h)}); nestTabakaCiz();
+}
+function nestDaireTabaka(){
+  const s=prompt("Daire tabaka — cap (mm)","600");
+  if(!s) return; const d=Number(s); if(!d) return;
+  NEST.tabakalar.push({ad:`Daire tabaka Ø${d}`, poly:dairePoly(d/2)}); nestTabakaCiz();
+}
+$("nestTabakaDosya").onchange = async e => {
+  const f=e.target.files[0]; if(!f) return;
+  const b64=await dosyaB64(f); const u=await api("/api/yukle",{ad:f.name,b64});
+  if(u.hata){ bildir(u.hata,true); return; }
+  const r=await api("/api/nest/parcalar_dxf",{yol:u.yol});
+  if(r.hata||!(r.parcalar||[]).length){ bildir("Sekil bulunamadi",true); return; }
+  // en buyuk alanli konturu tabaka (konteyner) al
+  let big=r.parcalar[0], ba=big.w*big.h;
+  r.parcalar.forEach(p=>{ if(p.w*p.h>ba){ba=p.w*p.h;big=p;} });
+  NEST.tabakalar.push({ad:`DXF sekil (${f.name})`, poly:big.poly}); nestTabakaCiz();
+  e.target.value="";
+};
+function nestTabakaCiz(){
+  const k=$("nestTabakaListe"); k.innerHTML="";
+  if(!NEST.tabakalar.length){ k.innerHTML='<div class="nest-oge">Henuz tabaka yok</div>'; return; }
+  NEST.tabakalar.forEach((t,i)=>{
+    const d=document.createElement("div"); d.className="nest-oge";
+    d.innerHTML=`<span class="isim">${i+1}. ${t.ad}</span><span class="sil">×</span>`;
+    d.querySelector(".sil").onclick=()=>{ NEST.tabakalar.splice(i,1); nestTabakaCiz(); };
+    k.appendChild(d);
+  });
+}
+
+// --- calistir ---
+async function nestCalistir(){
+  if(!NEST.parcalar.length || !NEST.tabakalar.length){
+    bildir("Parca ve tabaka ekleyin",true); return; }
+  const rot=$("nRot").value;
+  let rotasyonlar;
+  if(rot==="45") rotasyonlar=[0,45,90,135,180,225,270,315];
+  else if(rot==="15"){ rotasyonlar=[]; for(let a=0;a<360;a+=15) rotasyonlar.push(a); }
+  else rotasyonlar=rot.split(",").map(Number);
+  const ayar={ kerf:+$("nKerf").value, bosluk:+$("nBosluk").value,
+    kenar:+$("nKenar").value, cozunurluk:+$("nCoz").value, rotasyonlar };
+  $("nestDurum").innerHTML=`<span class="yukleniyor"></span> Yerlestiriliyor…`;
+  const r=await api("/api/nest/calistir",{parcalar:NEST.parcalar,
+    tabakalar:NEST.tabakalar.map(t=>({poly:t.poly})), ayar});
+  if(r.hata){ $("nestDurum").innerHTML=`<span class="uyari">${r.hata}</span>`; return; }
+  NEST.sonuc=r; NEST.aktif=0;
+  nestSekmeCiz(); nestCiz();
+  const ym=(r.yerlesmeyen||[]).reduce((a,b)=>a+b.adet,0);
+  $("nestDurum").innerHTML=`<span class="ok">Yerlesti:</span> ${r.yerlesim.length} parca · `+
+    `doluluk: ${r.doluluk.map((d,i)=>`T${i+1} %${d}`).join(" · ")}`+
+    (ym?` · <span class="uyari">${ym} parca sigmadi</span>`:"");
+}
+function nestSekmeCiz(){
+  const k=$("nestTabSekme"); k.innerHTML="";
+  NEST.tabakalar.forEach((t,i)=>{
+    const d=document.createElement("div");
+    d.className="nest-tab"+(i===NEST.aktif?" aktif":"");
+    const dol=NEST.sonuc?NEST.sonuc.doluluk[i]:0;
+    d.textContent=`Tabaka ${i+1} · %${dol}`;
+    d.onclick=()=>{ NEST.aktif=i; nestSekmeCiz(); nestCiz(); };
+    k.appendChild(d);
+  });
+}
+function nestCiz(){
+  const svg=$("nestSvg"); if(!svg) return; svgKur(svg);
+  const W=svg.clientWidth||700, H=svg.clientHeight||440;
+  const tab=NEST.tabakalar[NEST.aktif]; if(!tab) return;
+  const T=fitDonusum(tumBbox([tab.poly]), W, H, 20);
+  izgara(svg,W,H);
+  // tabaka konturu
+  ekle(svg,"path",{d:yolStr(tab.poly,T)+"Z", fill:"none", stroke:"var(--uyari)",
+    "stroke-width":1.6, "vector-effect":"non-scaling-stroke"});
+  // yerlesmis parcalar (bu tabaka)
+  if(NEST.sonuc){
+    NEST.sonuc.yerlesim.filter(y=>y.tabaka===NEST.aktif).forEach(y=>{
+      ekle(svg,"path",{d:yolStr(y.poly,T)+"Z", fill:"color-mix(in srgb,var(--acc) 22%,transparent)",
+        stroke:"var(--acc)","stroke-width":1.1,"vector-effect":"non-scaling-stroke"});
+    });
+  }
+  zoomEtkinlestir(svg);
+}
+async function nestAktar(tur){
+  if(!NEST.sonuc){ bildir("Once yerlestirin",true); return; }
+  const r=await api("/api/nest/disari_aktar",{yerlesim:NEST.sonuc.yerlesim,
+    tabakalar:NEST.tabakalar.map(t=>({poly:t.poly})), ad:"nesting_"+Date.now()});
+  if(r.hata){ bildir(r.hata,true); return; }
+  const link=tur==="pdf"?r.indir_pdf:r.indir_dxf;
+  if(!link){ bildir("Cikti uretilemedi",true); return; }
+  window.location.href=link;
+}
+$("nestYardimPerde").onclick=e=>{ if(e.target===$("nestYardimPerde")) nestYardimKapat(); };
 
 // ===================== baslangic =====================
 gozat(AYAR.al("sonKlasor", null));

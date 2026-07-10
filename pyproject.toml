@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cnc-assistant"
-version = "1.5.0"
+version = "1.6.0"
 description = "CNC tabaka kesimi icin DXF baslangic-noktasi optimizasyonu, gereksiz node temizligi, riskli parca uyarisi ve G-Code blok siralama araci"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -19,6 +19,7 @@ classifiers = [
 ]
 dependencies = [
     "ezdxf>=1.1,<2.0",
+    "numpy>=1.20",
 ]
 
 [project.optional-dependencies]

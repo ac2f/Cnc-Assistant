@@ -50,19 +50,55 @@ def _komut_flatten(d, seg=18):
     return pts
 
 
+def _komut_path(d):
+    """SVG komut listesini (M/L/Q/C/Z) matplotlib Path'e cevirir (GERCEK
+    bezier egrileri -> PDF/vektor ciktida sonsuz yaklastirmada purüzsuz)."""
+    from matplotlib.path import Path
+    verts, codes = [], []
+    for c in d:
+        k = c[0]
+        if k == "M":
+            verts.append((c[1], c[2])); codes.append(Path.MOVETO)
+        elif k == "L":
+            verts.append((c[1], c[2])); codes.append(Path.LINETO)
+        elif k == "Q":
+            verts += [(c[1], c[2]), (c[3], c[4])]
+            codes += [Path.CURVE3, Path.CURVE3]
+        elif k == "C":
+            verts += [(c[1], c[2]), (c[3], c[4]), (c[5], c[6])]
+            codes += [Path.CURVE4, Path.CURVE4, Path.CURVE4]
+        elif k == "Z":
+            verts.append((0, 0)); codes.append(Path.CLOSEPOLY)
+    return Path(verts, codes) if verts else None
+
+
 def _kontur_ciz(ax, varliklar, riskli_handlelar, baslangic_etiketi=True):
+    from matplotlib.patches import PathPatch
     for v in varliklar:
-        pts = v["kontur"] if "kontur" in v else _komut_flatten(v["d"])
-        if not pts:
-            continue
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
         riskli = v["handle"] in riskli_handlelar
-        ax.plot(xs, ys, color="#d62728" if riskli else "#1f77b4",
-                lw=1.6 if riskli else 0.9)
+        renk = "#d62728" if riskli else "#1f77b4"
+        if "d" in v:
+            p = _komut_path(v["d"])
+            if p is not None:
+                ax.add_patch(PathPatch(p, fill=False, edgecolor=renk,
+                                       lw=1.6 if riskli else 0.9))
+        else:
+            pts = v.get("kontur") or []
+            if pts:
+                ax.plot([q[0] for q in pts], [q[1] for q in pts],
+                        color=renk, lw=1.6 if riskli else 0.9)
         if baslangic_etiketi and v["baslangic"] is not None:
             ax.plot(v["baslangic"][0], v["baslangic"][1], "o",
                     color="#2ca02c", ms=5, zorder=5)
+    # PathPatch'ler otomatik olceklenmez -> sinirlari komut koordlarindan kur
+    xs, ys = [], []
+    for v in varliklar:
+        for p in (_komut_flatten(v["d"]) if "d" in v else v.get("kontur") or []):
+            xs.append(p[0]); ys.append(p[1])
+    if xs:
+        pad = max((max(xs) - min(xs)), (max(ys) - min(ys))) * 0.03 + 1
+        ax.set_xlim(min(xs) - pad, max(xs) + pad)
+        ax.set_ylim(min(ys) - pad, max(ys) + pad)
     ax.set_aspect("equal")
     ax.grid(True, alpha=0.25)
 
@@ -92,6 +128,21 @@ def baslangic_oncesi_sonrasi(oncesi_varliklar, sonrasi_varliklar,
     fig.savefig(png_yol, dpi=140)
     plt.close(fig)
     print(f"[Onizleme] Oncesi/Sonrasi gorseli: {png_yol}")
+    return True
+
+
+def vektor_pdf(varliklar, yol, baslik="Nesting", vurgu_handlelar=None):
+    """Tek panelli GERCEK VEKTOREL PDF/PNG (komut formundan). Nesting sonucu
+    gibi tek gorunumler icin."""
+    plt = _matplotlib()
+    if plt is None:
+        return False
+    fig, ax = plt.subplots(figsize=(12, 9))
+    _kontur_ciz(ax, varliklar, vurgu_handlelar or set(), baslangic_etiketi=False)
+    ax.set_title(baslik)
+    fig.tight_layout()
+    fig.savefig(yol, dpi=140)
+    plt.close(fig)
     return True
 
 

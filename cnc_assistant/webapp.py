@@ -25,6 +25,7 @@ import json
 import os
 import tempfile
 import threading
+import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -34,9 +35,12 @@ from . import dxf_processor as D
 from . import gcode as GC
 from . import geometry as GEO
 from . import nesting as NEST
+from . import preview as PV
 from . import project as P
 
 _YUKLEME_DIZIN = os.path.join(tempfile.gettempdir(), "cnc_assistant_yukleme")
+_DXF_ONIZLE = {}          # yol -> {oncesi, sonrasi, riskli} (PDF/yeniden kullanim)
+_INDIRILEBILIR = set()    # /indir ile sunulabilecek (bizim urettigimiz) dosyalar
 
 WEB_DIZIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -221,6 +225,8 @@ def api_dxf_onizle(veri):
                            float(veri.get("alan_orani", 0.10)),
                            float(veri.get("boyut_orani", 0.50)))
     _DXF_DOC[yol] = sonuc["doc"]
+    _DXF_ONIZLE[yol] = {"oncesi": sonuc["oncesi"], "sonrasi": sonuc["sonrasi"],
+                        "riskli": sonuc["riskli_handlelar"]}
     riskli_kutu = [{"merkez": m, "w": w, "h": h}
                    for _, _, m, w, h in sonuc["riskli"]]
     return {
@@ -317,6 +323,25 @@ def api_gcode_kaydet(veri):
             "bosta_yol": d["prog"].bosta_yol()}
 
 
+def api_dxf_pdf(veri):
+    """Onizlemeyi (oncesi + sonrasi) GERCEK VEKTOREL PDF olarak uretir."""
+    yol = veri["yol"]
+    o = _DXF_ONIZLE.get(yol)
+    if o is None:
+        if not os.path.isfile(yol):
+            return {"hata": f"Dosya yok: {yol}"}
+        s = D.optimize_doc(yol, _dxf_opts(veri))
+        o = {"oncesi": s["oncesi"], "sonrasi": s["sonrasi"],
+             "riskli": s["riskli_handlelar"]}
+    kok, _ = os.path.splitext(yol)
+    pdf = f"{kok}_onizleme.pdf"
+    ok = PV.baslangic_oncesi_sonrasi(o["oncesi"], o["sonrasi"], o["riskli"], pdf)
+    if not ok:
+        return {"hata": "matplotlib kurulu degil; PDF uretilemedi."}
+    _INDIRILEBILIR.add(os.path.abspath(pdf))
+    return {"pdf": pdf, "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(pdf))}
+
+
 def api_dxf_nest(veri):
     """DXF parcalarini tabakaya yeniden yerlestirir (nesting) ve kaydeder."""
     yol = veri["yol"]
@@ -359,6 +384,96 @@ def api_yukle(veri):
     return {"yol": hedef, "ad": ad, "tur": tur}
 
 
+def api_nest_parcalar_dxf(veri):
+    """Bir DXF'teki kapali konturlari nesting parcalari olarak doner."""
+    yol = veri["yol"]
+    if not os.path.isfile(yol):
+        return {"hata": f"Dosya yok: {yol}"}
+    doc = ezdxf.readfile(yol)
+    parcalar = []
+    for i, v in enumerate(D.baslangic_noktalari_ve_konturlar(doc)):
+        pts = v["kontur"]
+        if len(pts) < 3:
+            continue
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+        if w < 1e-6 or h < 1e-6:
+            continue
+        parcalar.append({"id": f"{os.path.basename(yol)}#{i}",
+                         "ad": f"{v['tip']} {i}", "poly": pts, "adet": 1,
+                         "w": round(w, 2), "h": round(h, 2)})
+    return {"parcalar": parcalar}
+
+
+def api_nest_calistir(veri):
+    parcalar = veri.get("parcalar") or []
+    tabakalar = veri.get("tabakalar") or []
+    if not parcalar or not tabakalar:
+        return {"hata": "En az bir parca ve bir tabaka gerekli."}
+    return NEST.raster_nest(parcalar, tabakalar, veri.get("ayar", {}))
+
+
+def _poly_to_lw(msp, poly, layer, dx=0.0, dy=0.0):
+    msp.add_lwpolyline([(x + dx, y + dy) for x, y in poly],
+                       close=True, dxfattribs={"layer": layer})
+
+
+def api_nest_disari_aktar(veri):
+    """Nesting sonucunu DXF (+ vektorel PDF) olarak yazar. Tabakalar yan yana
+    yerlestirilir (aralarinda bosluk)."""
+    yerlesim = veri.get("yerlesim") or []
+    tabakalar = veri.get("tabakalar") or []
+    if not yerlesim:
+        return {"hata": "Once yerlestirme calistirin."}
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    ofsx = 0.0
+    tab_ofset = []
+    for t in tabakalar:
+        xs = [p[0] for p in t["poly"]]; ys = [p[1] for p in t["poly"]]
+        x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+        dx = ofsx - x0
+        tab_ofset.append((dx, -y0))
+        _poly_to_lw(msp, t["poly"], "TABAKA", dx, -y0)
+        ofsx += (x1 - x0) + max((x1 - x0), (y1 - y0)) * 0.05 + 10
+    for y in yerlesim:
+        ti = y.get("tabaka", 0)
+        dx, dy = tab_ofset[ti] if ti < len(tab_ofset) else (0.0, 0.0)
+        _poly_to_lw(msp, y["poly"], "PARCA", dx, dy)
+    ad = veri.get("ad", "nesting")
+    kok = os.path.join(_YUKLEME_DIZIN, ad)
+    os.makedirs(_YUKLEME_DIZIN, exist_ok=True)
+    dxf_yol = f"{kok}.dxf"
+    doc.saveas(dxf_yol)
+    _INDIRILEBILIR.add(os.path.abspath(dxf_yol))
+    # PDF (vektorel) onizleme: tabakalar + yerlesmis parcalar (ofsetli)
+    pdf_link = None
+    try:
+        def _yol_komut(poly, dx, dy):
+            pts = [(x + dx, y + dy) for x, y in poly]
+            return [["M", pts[0][0], pts[0][1]]] + [["L", q[0], q[1]] for q in pts[1:]]
+        varliklar = []
+        for i, t in enumerate(tabakalar):
+            dx, dy = tab_ofset[i]
+            varliklar.append({"tip": "T", "handle": f"t{i}", "kapali": True,
+                              "baslangic": None, "d": _yol_komut(t["poly"], dx, dy)})
+        for j, y in enumerate(yerlesim):
+            dx, dy = tab_ofset[y.get("tabaka", 0)] if tab_ofset else (0, 0)
+            varliklar.append({"tip": "P", "handle": f"p{j}", "kapali": True,
+                              "baslangic": None, "d": _yol_komut(y["poly"], dx, dy)})
+        pdf_yol = f"{kok}.pdf"
+        # tabaka handle'larini vurgula (kirmizi kontur)
+        vurgu = {f"t{i}" for i in range(len(tabakalar))}
+        if PV.vektor_pdf(varliklar, pdf_yol, "Nesting sonucu", vurgu):
+            _INDIRILEBILIR.add(os.path.abspath(pdf_yol))
+            pdf_link = "/indir?yol=" + urllib.parse.quote(os.path.abspath(pdf_yol))
+    except Exception:
+        pass
+    return {"dxf": dxf_yol,
+            "indir_dxf": "/indir?yol=" + urllib.parse.quote(os.path.abspath(dxf_yol)),
+            "indir_pdf": pdf_link}
+
+
 def api_proje_klasor(veri):
     klasor = veri["klasor"]
     if not os.path.isdir(klasor):
@@ -377,6 +492,7 @@ API = {
     "/api/gozat": api_gozat,
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
+    "/api/dxf/pdf": api_dxf_pdf,
     "/api/dxf/nest": api_dxf_nest,
     "/api/gcode/yukle": api_gcode_yukle,
     "/api/gcode/sirala": api_gcode_sirala,
@@ -385,6 +501,9 @@ API = {
     "/api/gcode/karsilastir": api_gcode_karsilastir,
     "/api/gcode/tablar": api_gcode_tablar,
     "/api/yukle": api_yukle,
+    "/api/nest/parcalar_dxf": api_nest_parcalar_dxf,
+    "/api/nest/calistir": api_nest_calistir,
+    "/api/nest/disari_aktar": api_nest_disari_aktar,
     "/api/proje/klasor": api_proje_klasor,
 }
 
@@ -411,6 +530,9 @@ class Isleyici(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if yol == "/indir":
+            self._indir()
+            return
         if yol == "/":
             yol = "/index.html"
         dosya = os.path.join(WEB_DIZIN, yol.lstrip("/"))
@@ -423,6 +545,26 @@ class Isleyici(BaseHTTPRequestHandler):
                 self._gonder(200, f.read(), tur)
         else:
             self._gonder(404, json.dumps({"hata": "bulunamadi"}))
+
+    def _indir(self):
+        """Bizim urettigimiz (izinli) dosyalari indirme olarak sunar."""
+        q = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        hedef = os.path.abspath((q.get("yol", [""])[0]))
+        if hedef not in _INDIRILEBILIR or not os.path.isfile(hedef):
+            self._gonder(404, json.dumps({"hata": "bulunamadi"}))
+            return
+        with open(hedef, "rb") as f:
+            veri = f.read()
+        tur = ("application/pdf" if hedef.endswith(".pdf")
+               else "image/svg+xml" if hedef.endswith(".svg")
+               else "application/octet-stream")
+        self.send_response(200)
+        self.send_header("Content-Type", tur)
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="{os.path.basename(hedef)}"')
+        self.send_header("Content-Length", str(len(veri)))
+        self.end_headers()
+        self.wfile.write(veri)
 
     def do_POST(self):
         yol = self.path.split("?", 1)[0]
