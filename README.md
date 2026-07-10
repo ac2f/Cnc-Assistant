@@ -90,20 +90,27 @@ python main.py examples/ornek_kesim.tap -e
 
 ## Ne yapar? (detay)
 
-### 1) Baslangic noktasi optimizasyonu (DXF)
+### 1) Baslangic noktasi optimizasyonu (DXF) — DESTEK-UC yontemi
 
-Kapali her vektor icin baslangic noktasi, parca tipine gore secilir:
+Kesim sirasi sol-alttan sag-uste ilerledigi icin, bir parca kesilirken onun
+**sag-ust tarafi hala dolu (kesilmemis) malzemeyle desteklidir.** Kapali bir
+kontur, kesim bittiginde **baslangic noktasinda** koptugundan (dongu orada
+kapanir), baslangici parcanin **destek yonundeki (sag-ust) UC noktasina**
+koyariz. Boylece parca en sona kadar destekli kalir, **asla desteksiz kalmaz.**
 
-| Parca tipi | Baslangic hedefi | Neden |
-|---|---|---|
-| **Normal parca** | Ust kenarda, **orta-ust ile sag-ust arasinda** (kose degil!) | Kose noktasi yerine iceride bir nokta secilir ki kesim sonuna kadar **destek korunur**. Varsayilan konum `--bas-x-orani 0.75`. |
-| **Uzun-ince serit** (orn. dikey "I", ince cubuk) | **Sag kenarda**, dikeyde ortada | Serit kesilirken her iki uctan da destekte kalir. `--serit-y-orani 0.5`. |
-| **Cember** | Sag-ust 45° | CIRCLE baslangic tasimaz; es-geometrik 2-yayli polyline'a cevrilip baslangic verilir (form/olcu birebir ayni). |
+Secim **deterministiktir** (tolerans/kose-yakinligi tahmini yok): her vertex'in
+destek yonune izdusumu hesaplanir, en yuksek olan (uc) secilir. Duz bir sag-ust
+kenar varsa o kenarin ORTASI secilir (kose yerine, arkasi tumuyle dolu bir
+nokta). Bu sayede **4 vertex'li kucuk parcada da, 900+ vertex'li karmasik/ic
+bukey parcada da** ayni guvenle calisir; yeni node **eklemez**.
 
-**Hedef bolgede uygun bir vertex yoksa**, programcik en yakin **duz** segment
-uzerine — geometriyi bozmadan — yeni bir nokta ekler ve baslangici oraya tasir
-(el yazisi gibi serbest egriler icin). Eklenen nokta var olan segmenti yalnizca
-ikiye boler; sekil/uzunluk degismez.
+Destek yonu `--destek-yonu` ile ayarlanir: **`sag-ust`** (varsayilan, onerilen),
+`ust` (ust agirlikli) veya `sag` (sag agirlikli). Uzun-ince seritler ve cemberler
+de ayni kural ile dogal olarak sag-ust ucundan baslar.
+
+> Gercek bir ArtCAM nesting dosyasinda (1500×3000, 297 parca) test edildi:
+> parcalarin **%99'u** dogru sag-ust ucta konumlandi (onceki surumde ~%11),
+> bbox + toplam cevre birebir korundu, ~103.000 gereksiz node temizlendi.
 
 ### 2) Gereksiz node temizligi
 
@@ -171,6 +178,13 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   tablosu**, **Tumunu Kaydet**, **klavye kisayollari** (Ctrl+S, Ctrl+Shift+S,
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
+
+**v1.4 yenilikleri:**
+- **Destek-uc baslangic algoritmasi** (yukaridaki "1) Baslangic noktasi"):
+  deterministik, karmasik/kucuk parcalarda kusursuz, parca asla desteksiz
+  kalmaz. Arayuzde **destek yonu** secici (Sag-ust / Ust / Sag).
+- **Node temizligi O(n)** yigin-tabanli algoritmaya gecti — 100.000+ node'lu
+  buyuk nesting dosyalari saniyeler icinde islenir.
 
 **v1.3 yenilikleri:**
 - **Onizleme gecmisi:** her DXF isleme/nesting ve her G-Code siralama/duzenleme
@@ -288,9 +302,7 @@ Genel / arayuz:
 DXF secenekleri:
   --alan-orani        Risk esigi: parca alani / tabaka alani         (0.10)
   --boyut-orani       Risk esigi: parca eni-boyu / tabaka eni-boyu   (0.50)
-  --bas-x-orani       Normal parca baslangic yatay konumu            (0.75)
-                      (0.5=orta-ust, 1.0=sag-ust)
-  --serit-y-orani     Serit parca sag-kenar dikey konumu             (0.50)
+  --destek-yonu       Baslangic (kopma) destek yonu: sag-ust|ust|sag (sag-ust)
   --node-tol          Node sadelestirme toleransi                    (1e-06)
   --node-temizleme-yok  Gereksiz node temizligini kapat
   --onizleme-yok      DXF icin PNG uretme

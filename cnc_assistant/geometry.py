@@ -31,13 +31,22 @@ UZUN_INCE_ORAN = 0.18
 # Kose-civari aday bolge yaricapi: bbox kosegeninin bu orani.
 KOSE_TOL_ORANI = 0.15
 
-# Normal parcalarda baslangic hedefinin ust kenar uzerindeki yatay konumu.
-# 0.5 = tam orta-ust, 1.0 = tam sag-ust. Varsayilan ikisinin arasi (saga
-# yakin) -> kose degil ama saga dogru; boylece kesim boyunca destek kalir.
-BASLANGIC_X_ORANI = 0.75
+# DESTEK YONU (lead-in/baslangic secimi icin en onemli parametre).
+# Kesim sirasi sol-alttan sag-uste ilerledigi icin, bir parca kesilirken
+# SAG-UST tarafi hala dolu (kesilmemis) malzemeyle desteklidir. Kapali bir
+# kontur baslangic noktasinda koptugundan, baslangici parcanin bu destek
+# yonundeki UC noktasina koyariz -> parca en sona kadar destekte kalir.
+# (dx, dy); varsayilan sag-ust (45 derece). Yatay agirlikli isterseniz
+# (1, 0.6) gibi, dikey agirlikli isterseniz (0.6, 1) verebilirsiniz.
+DESTEK_YONU = (1.0, 1.0)
 
-# Uzun-ince parcalarda baslangic hedefinin sag kenar uzerindeki dikey konumu.
-# 0.0 = sag-alt, 1.0 = sag-ust, 0.5 = sag-orta.
+# Destek yonunde "en uc" sayilacak vertex bandi (bbox kosegeninin orani).
+# Bu bant icinde birden cok vertex varsa (duz bir sag-ust kenar), o kenarin
+# ORTASINDAKI vertex secilir (kose yerine, kenar boyunca destekli nokta).
+DESTEK_BANT_ORANI = 0.02
+
+# --- Geriye donuk uyumluluk (eski hedef-tabanli parametreler) ---
+BASLANGIC_X_ORANI = 0.75
 SERIT_Y_ORANI = 0.5
 
 # Node sadelestirmede "es-dogrultulu" kabul edilecek azami sapma (cizim
@@ -100,54 +109,52 @@ def _genislikler_sifir(p):
     return abs(p[2]) <= 1e-12 and abs(p[3]) <= 1e-12
 
 
+def _silinebilir(A, B, C, tol):
+    """B vertex'i (A ile C arasinda) gereksiz mi? Silinebilmesi icin:
+      * A->B ve B->C DUZ (bulge == 0) olmali (yay segmentleri korunur),
+      * A ve B genislik (taper) tasimamali,
+      * A, B, C es-dogrultulu ve B aralarinda olmali."""
+    if abs(A[4]) > 1e-12 or abs(B[4]) > 1e-12:
+        return False
+    if not (_genislikler_sifir(A) and _genislikler_sifir(B)):
+        return False
+    return _es_dogrultulu_mu(A, B, C, tol)
+
+
 def node_sadelestir(noktalar, kapali, tol=NODE_TOL):
-    """Gereksiz vertex'leri GEOMETRIYI KORUYARAK kaldirir.
+    """Gereksiz (es-dogrultulu / sifir-uzunluklu) vertex'leri GEOMETRIYI
+    KORUYARAK kaldirir. Cevre uzunlugunu ve bbox'u degistirmez; sadece nokta
+    sayisini azaltir (ArtCAM vb. yuk/karmasayi dusurur).
 
-    Bir B vertex'i ancak su kosullarda silinir:
-      * B'ye gelen segment (A->B) ve B'den giden segment (B->C) DUZ
-        (bulge == 0) ise,
-      * A, B ve C es-dogrultulu ve B aralarinda ise (ya da B, A ile cakisik
-        -> sifir uzunluklu segment),
-      * ilgili noktalar genislik (taper) tasimiyorsa.
-
-    Bu islem cevre uzunlugunu ve bbox'u degistirmez; sadece fazla nokta
-    sayisini azaltir (ArtCAM vb. yazilimlarda yuk/karmasayi dusurur).
+    Yigin-tabanli TEK GECIS -> O(n) (buyuk/karmasik dosyalarda hizli). Bir
+    vertex kaldirilinca zincirleme sadelesmeler ayni gecisde yakalanir.
 
     `noktalar`: (x, y, start_w, end_w, bulge) tuple listesi.
-    `kapali`  : poligon kapali mi (cyclic komsuluk kullanilir).
+    `kapali`  : poligon kapali mi (dikis/seam ucu da sadelesir).
     Doner: (yeni_noktalar, silinen_sayisi)
     """
     pts = list(noktalar)
     asgari = 3 if kapali else 2
-    silinen = 0
+    if len(pts) <= asgari:
+        return pts, 0
 
-    devam = True
-    while devam and len(pts) > asgari:
-        devam = False
-        n = len(pts)
-        for i in range(n):
-            if kapali:
-                ia, ic = (i - 1) % n, (i + 1) % n
-            else:
-                # Acik polyline'da uc noktalar korunur
-                if i == 0 or i == n - 1:
-                    continue
-                ia, ic = i - 1, i + 1
+    res = []
+    for p in pts:
+        res.append(p)
+        while len(res) >= 3 and _silinebilir(res[-3], res[-2], res[-1], tol):
+            res.pop(-2)      # ortadaki gereksiz noktayi at (zincirleme)
 
-            A, B, C = pts[ia], pts[i], pts[ic]
+    # Kapali poligonda dikis (son<->ilk) civarini da temizle
+    if kapali:
+        temizlendi = True
+        while temizlendi and len(res) > asgari:
+            temizlendi = False
+            if len(res) >= 3 and _silinebilir(res[-2], res[-1], res[0], tol):
+                res.pop(-1); temizlendi = True
+            if len(res) >= 3 and _silinebilir(res[-1], res[0], res[1], tol):
+                res.pop(0); temizlendi = True
 
-            # A->B ve B->C duz olmali (yay segmentleri bolunmez)
-            if abs(A[4]) > 1e-12 or abs(B[4]) > 1e-12:
-                continue
-            if not (_genislikler_sifir(A) and _genislikler_sifir(B)):
-                continue
-            if _es_dogrultulu_mu(A, B, C, tol):
-                del pts[i]
-                silinen += 1
-                devam = True
-                break
-
-    return pts, silinen
+    return res, len(pts) - len(res)
 
 
 # ----------------------------------------------------------------------
@@ -272,31 +279,53 @@ def tab_pozisyonlari(kontur, adet=4, kose_kacinma=0.12):
     return sonuc
 
 
+def destek_ucu_indeks(pts, d=DESTEK_YONU, band_orani=DESTEK_BANT_ORANI):
+    """Baslangic (lead-in / kopma) noktasi icin en SAG-UST (destek yonundeki)
+    vertex'in indeksini DETERMINISTIK olarak secer.
+
+    Yontem: her vertex'in destek yonune (d) izdusumu hesaplanir; izdusumu en
+    yuksek olanlar (kucuk bir bant icinde) 'destek-yonune bakan uc' adaylaridir.
+      - Tek aday varsa (keskin sag-ust kose): o secilir.
+      - Birden cok aday varsa (destek yonune dik, DUZ bir sag-ust kenar): o
+        kenarin ORTASINDAKI vertex secilir -> kose yerine, arkasi tamamen dolu
+        malzemeyle destekli bir nokta.
+
+    Bu, tolerans/kose-yakinligi tahminlerinden bagimsizdir; 4 vertex'li kucuk
+    parcada da, 900+ vertex'li karmasik/ic bukey parcada da AYNI guvenle
+    calisir ve parcayi asla desteksiz birakmaz."""
+    n = len(pts)
+    if n == 0:
+        return 0
+    dx, dy = d
+    nrm = math.hypot(dx, dy) or 1.0
+    dx, dy = dx / nrm, dy / nrm
+    proj = [p[0] * dx + p[1] * dy for p in pts]
+    mx = max(proj)
+
+    xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
+    diag = math.hypot(w, h) or 1.0
+    band = diag * band_orani
+
+    adaylar = [i for i in range(n) if proj[i] >= mx - band]
+    if len(adaylar) == 1:
+        return adaylar[0]
+    # Duz sag-ust kenar: dik eksende (perp) ORTADAKI adayi sec
+    px, py = -dy, dx
+    adaylar.sort(key=lambda i: pts[i][0] * px + pts[i][1] * py)
+    return adaylar[len(adaylar) // 2]
+
+
 def baslangic_indeksi_belirle(pts, **kw):
-    """Hedef noktayi belirler ve baslangic vertex'inin indeksini doner.
+    """Baslangic vertex indeksini destek yonundeki uca gore secer.
 
     Doner: (indeks, uzun_ince, eklenecek)
-      indeks      : rotasyon yapilacak vertex indeksi (None ise yeni nokta
-                    eklenmeli),
-      uzun_ince   : parca serit mi,
-      eklenecek   : (segment_idx, yeni_pt) ya da None.
+      indeks    : rotasyon yapilacak vertex indeksi (her zaman gecerli),
+      uzun_ince : parca serit mi (yalnizca bilgi/rapor icin),
+      eklenecek : None (destek-uc yontemi mevcut vertex kullanir; yeni node
+                  EKLENMEZ -> gereksiz node uretilmez).
     """
     xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
     uzun_ince = uzun_ince_mi(w, h)
-    hedef = hedef_nokta(pts, uzun_ince,
-                        kw.get("bas_x_orani", BASLANGIC_X_ORANI),
-                        kw.get("serit_y_orani", SERIT_Y_ORANI))
-
-    i = hedefe_en_yakin_vertex(pts, hedef, kw.get("tol_orani", KOSE_TOL_ORANI))
-    if i is not None:
-        return i, uzun_ince, None
-
-    eklenen = en_uygun_duz_segment_ekleme_noktasi(pts, hedef)
-    if eklenen is None:
-        # Tum kenarlar yay -> yeni nokta eklenemez; en yakin mevcut vertex.
-        i = min(range(len(pts)),
-                key=lambda k: (pts[k][0] - hedef[0]) ** 2
-                + (pts[k][1] - hedef[1]) ** 2)
-        return i, uzun_ince, None
-
-    return None, uzun_ince, eklenen
+    d = kw.get("destek_yonu", DESTEK_YONU)
+    i = destek_ucu_indeks(pts, d, kw.get("band_orani", DESTEK_BANT_ORANI))
+    return i, uzun_ince, None

@@ -87,6 +87,35 @@ def test_serit_baslangic_sag_kenar():
     assert 0 < hedef[1] < 100                    # dikeyde icerde (destek)
 
 
+def test_destek_ucu_dikdortgen_sag_ust_kose():
+    # Dikdortgen -> baslangic sag-ust kosede (max x+y)
+    pts = [(0, 0), (100, 0), (100, 60), (0, 60)]
+    i = G.destek_ucu_indeks(pts)
+    assert pts[i] == (100, 60)
+
+
+def test_destek_ucu_saga_bakan_ucgen():
+    # Saga bakan ucgen -> baslangic sag ucta (destek yonundeki extremum)
+    pts = [(0, 20), (0, -20), (60, 0)]
+    i = G.destek_ucu_indeks(pts)
+    assert pts[i] == (60, 0)
+
+
+def test_destek_ucu_yon_ayarlanabilir():
+    # Destek yonu 'ust' verilirse en ust nokta secilir
+    pts = [(0, 0), (100, 0), (100, 60), (0, 60), (50, 90)]
+    i = G.destek_ucu_indeks(pts, d=(0.2, 1.0))
+    assert pts[i] == (50, 90)
+
+
+def test_destek_ucu_kucuk_parca():
+    # 4 vertex'li kucuk parca da sorunsuz
+    pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
+    assert (pts[i][0], pts[i][1]) == (8, 8)
+    assert ekle is None          # yeni node EKLENMEZ
+
+
 def test_baslangic_indeksi_serit_dikey():
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0),
            (10, 100, 0, 0, 0), (0, 100, 0, 0, 0)]

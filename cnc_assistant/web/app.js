@@ -149,7 +149,7 @@ function dosyaAc(f) {
   const doc = { id: ++sayac, yol: f.yol, ad: f.ad, tur: f.tur, durum: "yeni" };
   if (f.tur === "dxf") {
     doc.params = Object.assign(
-      { bas_x: 0.75, serit_y: 0.5, node_tol: 1e-6, node_temiz: true },
+      { destek: "sag-ust", node_tol: 1e-6, node_temiz: true },
       AYAR.al("dxfParams", {}));
     doc.onizGecmis = []; doc.onizAktif = -1;
   }
@@ -170,10 +170,9 @@ async function yukle(doc) {
   if (doc.tur === "dxf") {
     const p = doc.params;
     doc.veri = await api("/api/dxf/onizle", { yol: doc.yol,
-      bas_x_orani: p.bas_x, serit_y_orani: p.serit_y,
-      node_tol: p.node_tol, node_temizle: p.node_temiz });
+      destek_yonu: p.destek, node_tol: p.node_tol, node_temizle: p.node_temiz });
     if (!doc.veri.hata)
-      onizEkle(doc, `bas ${p.bas_x} · ${p.node_temiz ? "temiz" : "ham"}`);
+      onizEkle(doc, `${p.destek} · ${p.node_temiz ? "temiz" : "ham"}`);
   } else {
     const g = await api("/api/gcode/yukle", { yol: doc.yol });
     doc.veri = g;
@@ -230,12 +229,12 @@ function dxfIcerik(doc) {
   el.innerHTML = `
     <div class="kart">
       <div class="arac">
-        <div class="grup"><label>Baslangic yatay (0.5 orta → 1.0 sag)</label>
-          <input type="range" min="0.5" max="1" step="0.05" value="${p.bas_x}" id="d_basx">
-          <span class="deger">deger: <b id="d_basxv">${p.bas_x}</b></span></div>
-        <div class="grup"><label>Serit dikey (sag kenar)</label>
-          <input type="range" min="0" max="1" step="0.05" value="${p.serit_y}" id="d_sery">
-          <span class="deger">deger: <b id="d_seryv">${p.serit_y}</b></span></div>
+        <div class="grup"><label>Baslangic (kopma) destek yonu</label>
+          <select class="alan" id="d_destek" style="width:170px">
+            <option value="sag-ust">Sag-ust (onerilen)</option>
+            <option value="ust">Ust agirlikli</option>
+            <option value="sag">Sag agirlikli</option>
+          </select></div>
         <div class="grup"><label>Node toleransi</label>
           <input type="text" class="alan kk" id="d_tol" value="${p.node_tol}"></div>
         <label class="anahtar"><input type="checkbox" id="d_temiz" ${p.node_temiz?"checked":""}>
@@ -276,8 +275,8 @@ function dxfIcerik(doc) {
   // olaylar
   const kaydetP = () => AYAR.yaz("dxfParams", p);
   setTimeout(() => {
-    $("d_basx").oninput = e => { p.bas_x = +e.target.value; $("d_basxv").textContent = p.bas_x; kaydetP(); };
-    $("d_sery").oninput = e => { p.serit_y = +e.target.value; $("d_seryv").textContent = p.serit_y; kaydetP(); };
+    $("d_destek").value = p.destek || "sag-ust";
+    $("d_destek").onchange = e => { p.destek = e.target.value; kaydetP(); yukle(doc); };
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
     $("d_yeniden").onclick = () => yukle(doc);

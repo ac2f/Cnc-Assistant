@@ -31,8 +31,7 @@ GCODE_UZANTILAR = {".nc", ".gcode", ".tap", ".ngc", ".cnc"}
 VARSAYILAN_OPTS = {
     "node_temizle": True,
     "node_tol": 1e-6,
-    "bas_x_orani": 0.75,
-    "serit_y_orani": 0.5,
+    "destek_yonu": (1.0, 1.0),
     "alan_orani": 0.10,
     "boyut_orani": 0.50,
     "gcode_mod": "sol-alt",     # sol-alt | serpantin | engel
@@ -78,7 +77,7 @@ class Proje:
         shutil.copy2(giris, os.path.join(self.yol("girdi"),
                                          os.path.basename(giris)))
         cikti = os.path.join(self.yol("dxf"), f"{ad}_optimized.dxf")
-        opt_keys = ("node_temizle", "node_tol", "bas_x_orani", "serit_y_orani")
+        opt_keys = ("node_temizle", "node_tol", "destek_yonu")
         sonuc = D.optimize_ve_kaydet(
             giris, cikti, {k: self.opts[k] for k in opt_keys},
             self.opts["alan_orani"], self.opts["boyut_orani"])

@@ -31,12 +31,14 @@ from .interactive import EtkilesimliEditor
 GCODE_UZANTILAR = {".nc", ".gcode", ".tap", ".ngc", ".cnc", ".txt"}
 
 
+_DESTEK_YONU = {"sag-ust": (1.0, 1.0), "ust": (0.35, 1.0), "sag": (1.0, 0.35)}
+
+
 def dxf_opts(args):
     return {
         "node_temizle": not args.node_temizleme_yok,
         "node_tol": args.node_tol,
-        "bas_x_orani": args.bas_x_orani,
-        "serit_y_orani": args.serit_y_orani,
+        "destek_yonu": _DESTEK_YONU.get(args.destek_yonu, (1.0, 1.0)),
     }
 
 
@@ -88,12 +90,12 @@ def kurulum_parser():
                        help="Risk esigi: parca bbox alani / tabaka alani")
     g_dxf.add_argument("--boyut-orani", type=float, default=0.50,
                        help="Risk esigi: parca eni-boyu / tabaka eni-boyu")
-    g_dxf.add_argument("--bas-x-orani", type=float, default=G.BASLANGIC_X_ORANI,
-                       help="Normal parca baslangic yatay konumu (0.5=orta-ust, "
-                            "1.0=sag-ust; aradaki deger destek birakir)")
-    g_dxf.add_argument("--serit-y-orani", type=float, default=G.SERIT_Y_ORANI,
-                       help="Serit parca baslangic dikey konumu sag kenarda "
-                            "(0=sag-alt, 1=sag-ust)")
+    g_dxf.add_argument("--destek-yonu", choices=("sag-ust", "ust", "sag"),
+                       default="sag-ust",
+                       help="Baslangic (kopma) noktasi destek yonu: sag-ust "
+                            "(varsayilan) parca en sona kadar sag-ust dolu "
+                            "malzemeden destekli kalir; 'ust'/'sag' agirlikli "
+                            "secenekler")
     g_dxf.add_argument("--node-tol", type=float, default=G.NODE_TOL,
                        help="Node sadelestirme tolerasi (cizim birimi)")
     g_dxf.add_argument("--node-temizleme-yok", action="store_true",
@@ -118,8 +120,7 @@ def _proje_opts(args):
     return {
         "node_temizle": not args.node_temizleme_yok,
         "node_tol": args.node_tol,
-        "bas_x_orani": args.bas_x_orani,
-        "serit_y_orani": args.serit_y_orani,
+        "destek_yonu": _DESTEK_YONU.get(args.destek_yonu, (1.0, 1.0)),
         "alan_orani": args.alan_orani,
         "boyut_orani": args.boyut_orani,
         "gcode_mod": ("serpantin" if args.serpantin
