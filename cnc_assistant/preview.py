@@ -23,9 +23,38 @@ def _matplotlib():
         return None
 
 
+def _komut_flatten(d, seg=18):
+    """SVG yol komutlarini (M/L/Q/C/Z) matplotlib icin nokta dizisine acar."""
+    pts = []
+    cur = None
+    for c in d:
+        k = c[0]
+        if k in ("M", "L"):
+            cur = (c[1], c[2]); pts.append(cur)
+        elif k == "Q":
+            c1 = (c[1], c[2]); e = (c[3], c[4]); p0 = cur or c1
+            for i in range(1, seg + 1):
+                t = i / seg; u = 1 - t
+                pts.append((u * u * p0[0] + 2 * u * t * c1[0] + t * t * e[0],
+                            u * u * p0[1] + 2 * u * t * c1[1] + t * t * e[1]))
+            cur = e
+        elif k == "C":
+            c1 = (c[1], c[2]); c2 = (c[3], c[4]); e = (c[5], c[6]); p0 = cur or c1
+            for i in range(1, seg + 1):
+                t = i / seg; u = 1 - t
+                pts.append((u**3 * p0[0] + 3 * u * u * t * c1[0]
+                            + 3 * u * t * t * c2[0] + t**3 * e[0],
+                            u**3 * p0[1] + 3 * u * u * t * c1[1]
+                            + 3 * u * t * t * c2[1] + t**3 * e[1]))
+            cur = e
+    return pts
+
+
 def _kontur_ciz(ax, varliklar, riskli_handlelar, baslangic_etiketi=True):
     for v in varliklar:
-        pts = v["kontur"]
+        pts = v["kontur"] if "kontur" in v else _komut_flatten(v["d"])
+        if not pts:
+            continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         riskli = v["handle"] in riskli_handlelar

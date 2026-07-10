@@ -154,6 +154,82 @@ def _yay_noktalari(x0, y0, x1, y1, w, g, bolut):
              cy + r * math.sin(a0 + (a1 - a0) * i / n)) for i in range(n + 1)]
 
 
+def _yay_merkez(x0, y0, x1, y1, w, g):
+    """G2/G3 yayinin merkezini (cx, cy) doner (I/J veya R)."""
+    if "I" in w or "J" in w:
+        return x0 + w.get("I", 0.0), y0 + w.get("J", 0.0)
+    r = w["R"]
+    mx, my = (x0 + x1) / 2.0, (y0 + y1) / 2.0
+    dx, dy = x1 - x0, y1 - y0
+    dd = math.hypot(dx, dy)
+    if dd < 1e-9 or abs(r) < dd / 2.0:
+        return mx, my
+    h = math.sqrt(max(r * r - (dd / 2.0) ** 2, 0.0))
+    sgn = 1 if ((g == 3.0) == (r > 0)) else -1
+    return mx + sgn * h * (-dy / dd), my + sgn * h * (dx / dd)
+
+
+def _yay_bezier(x0, y0, x1, y1, w, g):
+    """G2/G3 yayini kubik bezier ('C') komutlarina cevirir (<=90 derece
+    parcalara bolerek; her parca gorsel olarak birebir yay). SVG'de sonsuz
+    yaklastirmada purüzsuz kalir."""
+    cx, cy = _yay_merkez(x0, y0, x1, y1, w, g)
+    r = math.hypot(x0 - cx, y0 - cy)
+    if r < 1e-9:
+        return [["L", round(x1, 4), round(y1, 4)]]
+    a0 = math.atan2(y0 - cy, x0 - cx)
+    a1 = math.atan2(y1 - cy, x1 - cx)
+    if g == 2.0:                       # saat yonu (azalan aci)
+        while a1 >= a0:
+            a1 -= 2 * math.pi
+    else:                              # saat yonu tersi (artan aci)
+        while a1 <= a0:
+            a1 += 2 * math.pi
+    toplam = a1 - a0
+    n = max(1, int(math.ceil(abs(toplam) / (math.pi / 2.0))))
+    dth = toplam / n
+    k = (4.0 / 3.0) * math.tan(dth / 4.0) * r
+    cmds = []
+    for i in range(n):
+        b0 = a0 + dth * i
+        b1 = b0 + dth
+        p0 = (cx + r * math.cos(b0), cy + r * math.sin(b0))
+        p3 = (cx + r * math.cos(b1), cy + r * math.sin(b1))
+        c1 = (p0[0] - k * math.sin(b0), p0[1] + k * math.cos(b0))
+        c2 = (p3[0] + k * math.sin(b1), p3[1] - k * math.cos(b1))
+        cmds.append(["C", round(c1[0], 4), round(c1[1], 4),
+                     round(c2[0], 4), round(c2[1], 4),
+                     round(p3[0], 4), round(p3[1], 4)])
+    return cmds
+
+
+def blok_svg_komut(blok):
+    """Bloktaki hareketleri SVG yol komutlarina cevirir: G0/G1 -> M/L,
+    G2/G3 -> C (kubik bezier). Duz cizgi parcalari L; yaylar gercek egri.
+    Frontend bunlari dogrudan SVG path 'd' olarak cizer -> vektorel, kompakt."""
+    cmds = []
+    x = y = None
+    g = None
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if not ("X" in w or "Y" in w):
+            continue
+        nx = w.get("X", x if x is not None else 0.0)
+        ny = w.get("Y", y if y is not None else 0.0)
+        if x is None or y is None:
+            x, y = nx, ny
+            cmds.append(["M", round(x, 4), round(y, 4)])
+            continue
+        if g in (2.0, 3.0) and ("I" in w or "J" in w or "R" in w):
+            cmds.extend(_yay_bezier(x, y, nx, ny, w, g))
+        else:
+            cmds.append(["L", round(nx, 4), round(ny, 4)])
+        x, y = nx, ny
+    return cmds
+
+
 def birim_tespit(satirlar):
     """G20 (inch) / G21 (mm) tespit eder. Bulunamazsa None."""
     for s in satirlar:

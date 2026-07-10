@@ -515,39 +515,40 @@ function gcListe(doc, ihl) {
 function gcSvg(doc) {
   const svg = $("svgGc"); if (!svg) return; svgKur(svg);
   const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
-  const polys = doc.gc.sira.map(id => blokById(doc, id).poligon).filter(p => p.length);
-  const T = fitDonusum(tumBbox(polys), W, H, 34);
+  const tum = [];
+  doc.gc.sira.forEach(id => komutKoords(blokById(doc, id).komut || []).forEach(p => tum.push(p)));
+  const T = fitDonusum(tumBbox([tum]), W, H, 34);
   izgara(svg, W, H);
+  // kontur yollari (vektorel; yaylar egri, non-scaling-stroke)
   doc.gc.sira.forEach(id => {
-    const b = blokById(doc, id); if (b.poligon.length < 2) return;
-    ekle(svg, "path", { d: yolStr(b.poligon, T), fill: "none",
-      stroke: "var(--cizgi)", "stroke-width": 1.4 });
+    const b = blokById(doc, id); if (!b.komut || b.komut.length < 2) return;
+    ekle(svg, "path", { d: komutYol(b.komut, T), fill: "none",
+      stroke: "var(--cizgi)", "stroke-width": 1.4, "vector-effect": "non-scaling-stroke" });
   });
   const defs = ekle(svg, "defs", {});
   defs.innerHTML = `<marker id="ok" markerWidth="7" markerHeight="7" refX="5" refY="3"
-    orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--acc)"/></marker>`;
+    orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="var(--acc)"/></marker>`;
   const merkez = id => { const b = blokById(doc, id);
-    if (!b.poligon.length) return T(b.x, b.y);
-    let sx = 0, sy = 0; b.poligon.forEach(p => { sx += p[0]; sy += p[1]; });
-    return T(sx / b.poligon.length, sy / b.poligon.length); };
+    return b.merkez ? T(b.merkez[0], b.merkez[1]) : T(b.x, b.y); };
   for (let i = 0; i < doc.gc.sira.length - 1; i++) {
     const [x1, y1] = merkez(doc.gc.sira[i]), [x2, y2] = merkez(doc.gc.sira[i + 1]);
     ekle(svg, "line", { x1, y1, x2, y2, stroke: "var(--acc)", "stroke-width": 1.3,
-      opacity: .5, "marker-end": "url(#ok)" });
+      opacity: .5, "vector-effect": "non-scaling-stroke", "marker-end": "url(#ok)" });
   }
   // koprü (tab) isaretleri
   if (doc.gc.tabAcik && doc.gc.tablar) {
     doc.gc.tablar.forEach(liste => (liste || []).forEach(([x, y]) => {
       const [px, py] = T(x, y);
-      ekle(svg, "circle", { cx: px, cy: py, r: 4, class: "tab-nokta" });
+      ekle(svg, "circle", { cx: px, cy: py, r: 4, "data-baser": 4, class: "tab-nokta" });
     }));
   }
   doc.gc.sira.forEach((id, poz) => {
     const [cx, cy] = merkez(id);
     const renk = poz === 0 ? "#34c759" : (poz === doc.gc.sira.length - 1 ? "#af52de" : "#ff3b30");
-    ekle(svg, "circle", { cx, cy, r: 12, fill: "var(--yuzey)", stroke: renk, "stroke-width": 2.2 });
+    ekle(svg, "circle", { cx, cy, r: 12, "data-baser": 12, fill: "var(--yuzey)",
+      stroke: renk, "stroke-width": 2.2, "vector-effect": "non-scaling-stroke" });
     const t = ekle(svg, "text", { x: cx, y: cy + 4, "text-anchor": "middle",
-      "font-size": 11, fill: "var(--metin)", "font-weight": 700 });
+      "font-size": 11, "data-basefs": 11, fill: "var(--metin)", "font-weight": 700 });
     t.textContent = poz + 1;
   });
   zoomEtkinlestir(svg);
@@ -561,7 +562,17 @@ function svgKur(svg){ while (svg.firstChild) svg.removeChild(svg.firstChild); }
 function zoomEtkinlestir(svg) {
   const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
   if (!svg._vb) svg._vb = [0, 0, W, H];
-  const uygula = () => svg.setAttribute("viewBox", svg._vb.join(" "));
+  const uygula = () => {
+    svg.setAttribute("viewBox", svg._vb.join(" "));
+    // Nokta/yazi isaretlerini ekran-sabit boyutta tut (cizgiler zaten
+    // vector-effect:non-scaling-stroke ile sabit). s = veri-birim / ekran-piksel
+    const s = svg._vb[2] / W;
+    svg.querySelectorAll("[data-baser]").forEach(el =>
+      el.setAttribute("r", (parseFloat(el.dataset.baser) * s).toFixed(3)));
+    svg.querySelectorAll("[data-basefs]").forEach(el =>
+      el.setAttribute("font-size", (parseFloat(el.dataset.basefs) * s).toFixed(2)));
+  };
+  svg._uygula = uygula;
   uygula();
   if (svg._zoom) return;      // olaylar bir kez baglanir
   svg._zoom = true;
@@ -601,23 +612,51 @@ function fitDonusum(b, W, H, pad){ const w=Math.max(b[2]-b[0],1e-6),h=Math.max(b
   return (x,y)=>[ox+(x-b[0])*s, H-(oy+(y-b[1])*s)]; }
 function yolStr(pts, T){ return pts.map((p,i)=>{ const [x,y]=T(p[0],p[1]);
   return (i?"L":"M")+x.toFixed(1)+" "+y.toFixed(1); }).join(" "); }
+// SVG komut listesini (M/L/Q/C) T ile piksel uzayina cevirip 'd' string uretir.
+// Egriler (Q/C) affine donusum altinda bozulmaz -> vektorel, sonsuz zoom net.
+function komutYol(cmds, T, kapali){
+  let s = "";
+  for (const c of cmds){
+    const k = c[0];
+    if (k==="M"||k==="L"){ const [x,y]=T(c[1],c[2]); s+=k+x.toFixed(2)+" "+y.toFixed(2); }
+    else if (k==="Q"){ const [a,b]=T(c[1],c[2]),[x,y]=T(c[3],c[4]);
+      s+="Q"+a.toFixed(2)+" "+b.toFixed(2)+" "+x.toFixed(2)+" "+y.toFixed(2); }
+    else if (k==="C"){ const [a,b]=T(c[1],c[2]),[d,e]=T(c[3],c[4]),[x,y]=T(c[5],c[6]);
+      s+="C"+a.toFixed(2)+" "+b.toFixed(2)+" "+d.toFixed(2)+" "+e.toFixed(2)
+        +" "+x.toFixed(2)+" "+y.toFixed(2); }
+  }
+  if (kapali) s+="Z";
+  return s;
+}
+// Komutlardaki tum kontrol noktalari (bbox/fit icin)
+function komutKoords(cmds){
+  const pts=[];
+  for (const c of cmds){
+    if (c[0]==="M"||c[0]==="L") pts.push([c[1],c[2]]);
+    else if (c[0]==="Q") pts.push([c[1],c[2]],[c[3],c[4]]);
+    else if (c[0]==="C") pts.push([c[1],c[2]],[c[3],c[4]],[c[5],c[6]]);
+  }
+  return pts;
+}
 function izgara(svg, W, H){ const ad = 40;
   for (let x=0;x<=W;x+=ad) ekle(svg,"line",{x1:x,y1:0,x2:x,y2:H,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4});
   for (let y=0;y<=H;y+=ad) ekle(svg,"line",{x1:0,y1:y,x2:W,y2:y,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4}); }
 function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster){
   const svg = $(svgId); if (!svg) return; svgKur(svg);
   const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
-  const T = fitDonusum(tumBbox(varliklar.map(v=>v.kontur)), W, H, 26);
+  const tum = []; varliklar.forEach(v => komutKoords(v.d).forEach(p => tum.push(p)));
+  const T = fitDonusum(tumBbox([tum]), W, H, 26);
   izgara(svg, W, H);
   const rs = new Set(riskliHandlelar || []);
   varliklar.forEach(v => {
     const riskli = rs.has(v.handle);
-    ekle(svg, "path", { d: yolStr(v.kontur, T), fill:"none",
+    ekle(svg, "path", { d: komutYol(v.d, T, v.kapali), fill:"none",
       stroke: riskli ? "#ff3b30" : "var(--acc)", "stroke-width": riskli?2:1.3,
-      opacity: riskli?.95:.85 });
+      "vector-effect": "non-scaling-stroke", opacity: riskli?.95:.85 });
     if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
-      ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,
-        fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)","stroke-width":1.5}); }
+      ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
+        fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)",
+        "stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
   });
   zoomEtkinlestir(svg);
 }

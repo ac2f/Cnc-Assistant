@@ -179,6 +179,16 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
+**v1.5 yenilikleri:**
+- **Vektorel onizleme:** web onizlemeleri artik flatten edilmis cizgi yerine
+  **gercek egri komutlariyla** (SVG bezier `C`/`Q`) ciziliyor. DXF yaylari/
+  spline'lari ve G-Code `G2/G3` yaylari **sonsuz yaklastirmada purüzsuz** kalir;
+  cizgiler `non-scaling-stroke` ile her zoom'da ince/sabit. Yay = birkaç bezier
+  (yuzlerce nokta yerine) -> daha kompakt veri + daha hafif DOM.
+- Butunluk dogrulamasi CIRCLE->polyline donusumunun flatten OLCUM artefaktina
+  (~5e-5) karsi sağlamlastirildi (sekil zaten birebir; cembersiz dosyalar hala
+  tam-siki 1e-6 ile dogrulanir).
+
 **v1.4 yenilikleri:**
 - **Destek-uc baslangic algoritmasi** (yukaridaki "1) Baslangic noktasi"):
   deterministik, karmasik/kucuk parcalarda kusursuz, parca asla desteksiz

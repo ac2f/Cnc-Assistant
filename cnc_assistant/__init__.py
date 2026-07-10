@@ -8,7 +8,7 @@ temizligi, riskli parca uyarisi ve G-Code blok siralama (otomatik +
 etkilesimli) araci.
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 from . import (geometry, dxf_processor, gcode, preview, interactive,  # noqa: F401
                project, nesting, cli)

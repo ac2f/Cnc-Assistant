@@ -59,7 +59,7 @@ def _boyut_str(n):
 
 def _varlik_json(v):
     return {"tip": v["tip"], "handle": v["handle"],
-            "kontur": v["kontur"], "baslangic": v["baslangic"]}
+            "d": v["d"], "baslangic": v["baslangic"], "kapali": v.get("kapali")}
 
 
 def _gcode_yukle(yol):
@@ -75,8 +75,11 @@ def _ozet_bloklar(orijinal):
     out = []
     for i, blok in enumerate(orijinal):
         bx, by = GC.blok_bas_xy(blok)
+        poly = GC.blok_polygon(blok)
+        merkez = (sum(p[0] for p in poly) / len(poly),
+                  sum(p[1] for p in poly) / len(poly)) if poly else (bx, by)
         out.append({"id": i, "x": bx, "y": by, "bbox": GC.blok_bbox(blok),
-                    "poligon": GC.blok_polygon(blok),
+                    "komut": GC.blok_svg_komut(blok), "merkez": merkez,
                     "derinlik": derinlik[i], "satir": len(blok)})
     return out
 
@@ -320,7 +323,7 @@ def api_dxf_nest(veri):
     if not os.path.isfile(yol):
         return {"hata": f"Dosya yok: {yol}"}
     doc = ezdxf.readfile(yol)
-    oncesi = D.baslangic_noktalari_ve_konturlar(doc)
+    oncesi = D.varlik_yollari(doc)
     r = NEST.nest_doc(doc,
                       tabaka_genislik=float(veri.get("tabaka_genislik", 0)) or None,
                       bosluk=float(veri.get("bosluk", 5.0)),
@@ -331,7 +334,7 @@ def api_dxf_nest(veri):
     cikti = veri.get("cikti") or f"{kok}_nested.dxf"
     doc.saveas(cikti)
     _DXF_DOC[cikti] = doc
-    sonrasi = D.baslangic_noktalari_ve_konturlar(doc)
+    sonrasi = D.varlik_yollari(doc)
     return {"cikti": cikti, "parca_sayisi": r["parca_sayisi"],
             "tabaka": r["tabaka"], "cevre_korundu": r["cevre_korundu"],
             "oncesi": [_varlik_json(v) for v in oncesi],
