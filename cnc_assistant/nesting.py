@@ -291,20 +291,20 @@ def raster_nest(parcalar, tabakalar, ayar):
     r_dilate = max(0, int(round(parca_yari / hucre)))
     r_kenar = max(0, int(round(kenar / hucre)))
 
-    # Yerlestirme sirasi: alani buyukten kucuge (parca ornekleri ac)
+    # Parca ornekleri (adet kadar ac)
     ornekler = []
-    for p in parcalar:
+    for pi, p in enumerate(parcalar):
         x0, y0, x1, y1 = _poly_bbox_pts(p["poly"])
-        alan = (x1 - x0) * (y1 - y0)
+        w, h = x1 - x0, y1 - y0
         for _ in range(int(p.get("adet", 1))):
-            ornekler.append({"id": p["id"], "poly": p["poly"], "alan": alan})
-    ornekler.sort(key=lambda o: o["alan"], reverse=True)
+            ornekler.append({"pi": pi, "id": p["id"], "poly": p["poly"],
+                             "alan": w * h, "w": w, "h": h,
+                             "uzun": max(w, h)})
 
-    # Her tabaka icin izgara/maske hazirla. Konteyner dikdortgen ise izgarayi
-    # tam doldurur; erozyon icin 'disari' kalmadigindan izgarayi FALSE bir
-    # kenarlik ile doldurup (pad) kenar boslugu erozyonunu dogru yapariz.
+    # Her tabaka icin STATIK maske (U/notU) bir kez hazirla. Konteyner dikdortgen
+    # ise izgarayi tam doldurdugundan erozyon icin FALSE kenarlik (pad) ekleriz.
     pad = max(r_kenar, r_dilate) + 1
-    tab_durum = []
+    tab_statik = []
     for t in tabakalar:
         x0, y0, x1, y1 = _poly_bbox_pts(t["poly"])
         Wc = max(1, int(math.ceil((x1 - x0) / hucre)))
@@ -312,13 +312,12 @@ def raster_nest(parcalar, tabakalar, ayar):
         W, H = Wc + 2 * pad, Hc + 2 * pad
         xg, yg = x0 - pad * hucre, y0 - pad * hucre
         C = _rasterize(t["poly"], hucre, xg, yg, W, H)
-        U = _erode(C, r_kenar)                # kullanilabilir bolge
-        tab_durum.append({"x0": xg, "y0": yg, "W": W, "H": H,
-                          "U": U, "occ": _np.zeros((H, W), bool),
-                          "notU_f": (~U).astype(_np.float64),
-                          "kullanilan": 0})
+        U = _erode(C, r_kenar)
+        tab_statik.append({"x0": xg, "y0": yg, "W": W, "H": H, "U": U,
+                           "notU_f": (~U).astype(_np.float64),
+                           "kap": int(U.sum()) or 1})
 
-    # rotasyon maske onbellegi: (id, aci) -> (true_mask, inflated_mask, kh, kw)
+    # rotasyon maske onbellegi (tum denemelerde paylasilir)
     onbellek = {}
 
     def maske_al(oid, poly, aci):
@@ -330,64 +329,105 @@ def raster_nest(parcalar, tabakalar, ayar):
         Wt = max(1, int(math.ceil((x1 - x0) / hucre)))
         Ht = max(1, int(math.ceil((y1 - y0) / hucre)))
         tm0 = _rasterize(rp, hucre, x0, y0, Wt, Ht)
-        # Sisirme (clearance) icin maskeyi r_dilate kadar FALSE ile cevrele ki
-        # dilate disari dogru buyuyebilsin (aksi halde bbox'a kirpilir -> parcalar
-        # bosluksuz bitisir). true + inflated ayni sekil/orijini paylasir.
         p = r_dilate
         tm = _np.zeros((Ht + 2 * p, Wt + 2 * p), dtype=bool)
         tm[p:p + Ht, p:p + Wt] = tm0
         im = _dilate(tm, r_dilate)
-        ox, oy = x0 - p * hucre, y0 - p * hucre     # padli maskenin data orijini
+        ox, oy = x0 - p * hucre, y0 - p * hucre
         onbellek[anahtar] = (tm, im, tm.shape[0], tm.shape[1], ox, oy)
         return onbellek[anahtar]
 
-    yerlesim = []
-    yerlesmeyen = {}
-    for o in ornekler:
-        kondu = False
-        for ti, td in enumerate(tab_durum):
-            en_iyi = None
-            for aci in rotasyonlar:
-                tm, im, kh, kw, rminx, rminy = maske_al(o["id"], o["poly"], aci)
-                if kh > td["H"] or kw > td["W"]:
+    def _pack(sira):
+        """Verilen sira ile tek bir yerlestirme uygular. skor -> daha yuksek iyi:
+        (yerlesen_adet, -kullanilan_tabaka, toplam_doluluk)."""
+        occ = [_np.zeros((s["H"], s["W"]), bool) for s in tab_statik]
+        kullanilan = [0] * len(tab_statik)
+        yer, yok = [], {}
+        for o in sira:
+            kondu = False
+            for ti, s in enumerate(tab_statik):
+                sec = None
+                occf = occ[ti].astype(_np.float64)
+                for aci in rotasyonlar:
+                    tm, im, kh, kw, rminx, rminy = maske_al(o["id"], o["poly"], aci)
+                    if kh > s["H"] or kw > s["W"]:
+                        continue
+                    c_ic = _korelasyon(s["notU_f"], tm.astype(_np.float64))
+                    c_ov = _korelasyon(occf, im.astype(_np.float64))
+                    uy = (c_ic < 0.5) & (c_ov < 0.5)
+                    uy[s["H"] - kh + 1:, :] = False
+                    uy[:, s["W"] - kw + 1:] = False
+                    idx = _np.argwhere(uy)
+                    if idx.size == 0:
+                        continue
+                    p = idx[_np.lexsort((idx[:, 1], idx[:, 0]))][0]
+                    i, j = int(p[0]), int(p[1])
+                    if sec is None or (i, j) < (sec[0], sec[1]):
+                        sec = (i, j, aci, tm, im, kh, kw, rminx, rminy)
+                if sec is None:
                     continue
-                # cakismasiz konumlar: true_mask U icinde VE inflated occ ile cakismiyor
-                c_ic = _korelasyon(td["notU_f"], tm.astype(_np.float64))
-                c_ov = _korelasyon(td["occ"].astype(_np.float64),
-                                   im.astype(_np.float64))
-                uygun = (c_ic < 0.5) & (c_ov < 0.5)
-                uygun[td["H"] - kh + 1:, :] = False
-                uygun[:, td["W"] - kw + 1:] = False
-                idx = _np.argwhere(uygun)
-                if idx.size == 0:
-                    continue
-                # bottom-left: en kucuk row, sonra en kucuk col
-                secim = idx[_np.lexsort((idx[:, 1], idx[:, 0]))][0]
-                i, j = int(secim[0]), int(secim[1])
-                if en_iyi is None or (i, j) < (en_iyi[0], en_iyi[1]):
-                    en_iyi = (i, j, aci, tm, im, kh, kw, rminx, rminy)
-            if en_iyi is None:
-                continue
-            i, j, aci, tm, im, kh, kw, rminx, rminy = en_iyi
-            td["occ"][i:i + kh, j:j + kw] |= im
-            td["kullanilan"] += int(tm.sum())
-            # yerlesmis poligon (data koordinatlari)
-            hedef_x = td["x0"] + j * hucre
-            hedef_y = td["y0"] + i * hucre
-            rp = _dondur(o["poly"], aci)
-            tx, ty = hedef_x - rminx, hedef_y - rminy
-            yerlesim.append({"tabaka": ti, "id": o["id"], "aci": aci,
-                             "poly": [(x + tx, y + ty) for x, y in rp]})
-            kondu = True
-            break
-        if not kondu:
-            yerlesmeyen[o["id"]] = yerlesmeyen.get(o["id"], 0) + 1
+                i, j, aci, tm, im, kh, kw, rminx, rminy = sec
+                occ[ti][i:i + kh, j:j + kw] |= im
+                kullanilan[ti] += int(tm.sum())
+                hx, hy = s["x0"] + j * hucre, s["y0"] + i * hucre
+                rp = _dondur(o["poly"], aci)
+                tx, ty = hx - rminx, hy - rminy
+                yer.append({"tabaka": ti, "id": o["id"], "aci": aci,
+                            "poly": [(x + tx, y + ty) for x, y in rp]})
+                kondu = True
+                break
+            if not kondu:
+                yok[o["id"]] = yok.get(o["id"], 0) + 1
+        doluluk = [round(100.0 * kullanilan[k] / tab_statik[k]["kap"], 1)
+                   for k in range(len(tab_statik))]
+        tabaka_kullanildi = sum(1 for k in kullanilan if k > 0)
+        # Doluluk odakli skor (daha yuksek = iyi): once toplam DOLU ALAN (malzeme
+        # kullanimi), sonra yerlesen adet, sonra en az tabaka.
+        skor = (sum(kullanilan), len(yer), -tabaka_kullanildi)
+        return {"yerlesim": yer,
+                "yerlesmeyen": [{"id": k, "adet": v} for k, v in yok.items()],
+                "doluluk": doluluk, "skor": skor}
 
-    doluluk = []
-    for td in tab_durum:
-        toplam = int(td["U"].sum()) or 1
-        doluluk.append(round(100.0 * td["kullanilan"] / toplam, 1))
+    # --- Kalite (doluluk) seviyesi: farkli siralamalar dene, en iyisini sec ---
+    deneme = _deneme_sayisi(ayar, len(ornekler))
+    siralar = _siralamalar(ornekler, deneme)
+    en_iyi = None
+    for s in siralar:
+        r = _pack(s)
+        if en_iyi is None or r["skor"] > en_iyi["skor"]:
+            en_iyi = r
 
-    return {"yerlesim": yerlesim,
-            "yerlesmeyen": [{"id": k, "adet": v} for k, v in yerlesmeyen.items()],
-            "doluluk": doluluk, "hucre": hucre}
+    en_iyi["hucre"] = hucre
+    en_iyi["deneme"] = len(siralar)
+    en_iyi.pop("skor", None)
+    return en_iyi
+
+
+def _deneme_sayisi(ayar, n):
+    """Kalite seviyesine gore denenecek siralama sayisi.
+    optimizasyon: 1=hizli, 2=dengeli, 3=yuksek, 4=maksimum (veya dogrudan
+    'deneme' sayisi verilebilir)."""
+    if ayar.get("deneme"):
+        return max(1, int(ayar["deneme"]))
+    sev = int(ayar.get("optimizasyon", 2))
+    return {1: 1, 2: 4, 3: 12, 4: 30}.get(sev, 4)
+
+
+def _siralamalar(ornekler, deneme):
+    """Denenecek yerlestirme siralarini uretir: once deterministik (alan/uzun
+    kenar/en/boy azalan), sonra rastgele permutasyonlar."""
+    import random
+    det = [
+        sorted(ornekler, key=lambda o: o["alan"], reverse=True),
+        sorted(ornekler, key=lambda o: o["uzun"], reverse=True),
+        sorted(ornekler, key=lambda o: o["h"], reverse=True),
+        sorted(ornekler, key=lambda o: o["w"], reverse=True),
+    ]
+    out = det[:min(deneme, len(det))]
+    rnd = random.Random(12345)      # tekrar edilebilir
+    taban = det[0]
+    while len(out) < deneme:
+        k = list(taban)
+        rnd.shuffle(k)
+        out.append(k)
+    return out

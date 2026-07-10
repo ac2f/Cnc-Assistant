@@ -859,7 +859,8 @@ async function nestCalistir(){
   else if(rot==="15"){ rotasyonlar=[]; for(let a=0;a<360;a+=15) rotasyonlar.push(a); }
   else rotasyonlar=rot.split(",").map(Number);
   const ayar={ kerf:+$("nKerf").value, bosluk:+$("nBosluk").value,
-    kenar:+$("nKenar").value, cozunurluk:+$("nCoz").value, rotasyonlar };
+    kenar:+$("nKenar").value, cozunurluk:+$("nCoz").value, rotasyonlar,
+    optimizasyon:+$("nKalite").value };
   $("nestDurum").innerHTML=`<span class="yukleniyor"></span> Yerlestiriliyor…`;
   const r=await api("/api/nest/calistir",{parcalar:NEST.parcalar,
     tabakalar:NEST.tabakalar.map(t=>({poly:t.poly})), ayar});
