@@ -32,6 +32,7 @@ $("temaBtn").onclick = () => {
 // ===================== dosya gezgini =====================
 let GZ = { yol: null, ev: null, cwd: null };
 let SON_TARAMA = null;      // filtre icin son gozat sonucu
+let ZIYARET = AYAR.al("ziyaret", []);   // ziyaret gecmisi (yeni -> eski)
 
 async function gozat(yol) {
   const s = await api("/api/gozat", { yol });
@@ -40,6 +41,9 @@ async function gozat(yol) {
   GZ = { yol: s.yol, ev: s.ev, cwd: s.cwd };
   SON_TARAMA = s;
   AYAR.yaz("sonKlasor", s.yol);
+  // ziyaret gecmisine ekle (en son girilen klasoru izlemek icin)
+  ZIYARET = [s.yol, ...ZIYARET.filter(z => z !== s.yol)].slice(0, 80);
+  AYAR.yaz("ziyaret", ZIYARET);
   $("pKlasor").value = s.yol;
   $("ara").value = "";
   // yol cubugu (breadcrumb)
@@ -58,22 +62,45 @@ async function gozat(yol) {
   gezginCiz(s, "");
 }
 
-// Filtrelenebilir gezgin listesi (NOT: her zaman appendChild kullan; innerHTML +=
-// tiklama olaylarini siler ve boş klasorde ".." tiklanamaz hale gelirdi)
+// Siralama karsilastiricisi
+function siralayici(mod) {
+  const ad = (a, b) => a.ad.toLowerCase().localeCompare(b.ad.toLowerCase());
+  switch (mod) {
+    case "eski": return (a, b) => (a.mtime || 0) - (b.mtime || 0);
+    case "ad": return ad;
+    case "ad_ters": return (a, b) => ad(b, a);
+    case "tur": return (a, b) => ((a.tur || "") + a.ad).localeCompare((b.tur || "") + b.ad);
+    case "boyut": return (a, b) => (b.bayt || 0) - (a.bayt || 0);
+    default: return (a, b) => (b.mtime || 0) - (a.mtime || 0);   // yeni
+  }
+}
+// "en son girilen" klasoru bul (ziyaret gecmisinde en yeni, mevcut disi, gorunur)
+function sonZiyaretYolu(klasorler) {
+  const yollar = new Set(klasorler.map(k => k.yol));
+  for (const z of ZIYARET) if (z !== GZ.yol && yollar.has(z)) return z;
+  return null;
+}
+
+// Filtrelenebilir + siralanabilir gezgin listesi (NOT: her zaman appendChild kullan;
+// innerHTML += tiklama olaylarini siler ve boş klasorde ".." tiklanamaz hale gelirdi)
 function gezginCiz(s, filtre) {
   const g = $("gezgin"); g.innerHTML = "";
   const f = (filtre || "").toLowerCase();
   const uyar = a => !f || a.toLowerCase().includes(f);
+  const cmp = siralayici($("sirala").value);
+  const sonZ = sonZiyaretYolu(s.klasorler);
+
   if (s.ust && !f) {
     const u = oge(IK_KLASOR, "..", "", "klasor ust"); u.onclick = () => gozat(s.ust);
     g.appendChild(u);
   }
-  s.klasorler.filter(k => uyar(k.ad)).forEach(k => {
-    const e = oge(IK_KLASOR, k.ad, sayimRozet(k), "klasor");
+  s.klasorler.filter(k => uyar(k.ad)).sort(cmp).forEach(k => {
+    const sinif = "klasor" + (k.yol === sonZ ? " son-ziyaret" : "");
+    const e = oge(IK_KLASOR, k.ad, sayimRozet(k), sinif);
     e.onclick = () => gozat(k.yol);
     g.appendChild(e);
   });
-  s.dosyalar.filter(x => uyar(x.ad)).forEach(x => {
+  s.dosyalar.filter(x => uyar(x.ad)).sort(cmp).forEach(x => {
     const e = oge(IK_DOSYA, x.ad, `<span class="rozet">${x.tur}</span>`);
     e.onclick = () => dosyaAc(x); g.appendChild(e);
   });
@@ -86,6 +113,9 @@ function gezginCiz(s, filtre) {
   }
 }
 $("ara").oninput = e => { if (SON_TARAMA) gezginCiz(SON_TARAMA, e.target.value); };
+$("sirala").value = AYAR.al("siralama", "yeni");
+$("sirala").onchange = e => { AYAR.yaz("siralama", e.target.value);
+  if (SON_TARAMA) gezginCiz(SON_TARAMA, $("ara").value); };
 // Alt klasor icerik sayaci: magenta T{gcode} (toolpath), sari V{dxf} (vektor).
 // Icinde yoksa bos birakilir.
 function sayimRozet(k) {
@@ -117,10 +147,12 @@ function dosyaAc(f) {
   const varsa = DOCS.find(d => d.yol === f.yol);
   if (varsa) { AKTIF = varsa.id; render(); return; }
   const doc = { id: ++sayac, yol: f.yol, ad: f.ad, tur: f.tur, durum: "yeni" };
-  if (f.tur === "dxf")
+  if (f.tur === "dxf") {
     doc.params = Object.assign(
       { bas_x: 0.75, serit_y: 0.5, node_tol: 1e-6, node_temiz: true },
       AYAR.al("dxfParams", {}));
+    doc.onizGecmis = []; doc.onizAktif = -1;
+  }
   DOCS.push(doc); AKTIF = doc.id; render();
   yukle(doc);
 }
@@ -140,11 +172,14 @@ async function yukle(doc) {
     doc.veri = await api("/api/dxf/onizle", { yol: doc.yol,
       bas_x_orani: p.bas_x, serit_y_orani: p.serit_y,
       node_tol: p.node_tol, node_temizle: p.node_temiz });
+    if (!doc.veri.hata)
+      onizEkle(doc, `bas ${p.bas_x} · ${p.node_temiz ? "temiz" : "ham"}`);
   } else {
     const g = await api("/api/gcode/yukle", { yol: doc.yol });
     doc.veri = g;
     if (g.guvenli) doc.gc = { bloklar: g.bloklar, sira: g.onerilen_sira.slice(),
-      gecmis: [], ileri: [], canli: true,
+      tarih: [{ sira: g.onerilen_sira.slice(), etiket: "auto" }], aktif: 0,
+      canli: true,
       tabAcik: AYAR.al("tabAcik", false), tabAdet: AYAR.al("tabAdet", 4),
       tablar: null };
   }
@@ -235,6 +270,8 @@ function dxfIcerik(doc) {
           <div class="aciklama"><span><i style="background:#34c759"></i>Yeni baslangic</span>
             <span><i style="background:#ff3b30"></i>Riskli parca (hold-down)</span></div></div>
       </div>
+      <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
+      <div class="gecmis-serit" id="d_gecmis"></div>
     </div>`;
   // olaylar
   const kaydetP = () => AYAR.yaz("dxfParams", p);
@@ -255,8 +292,9 @@ function dxfIcerik(doc) {
         tabaka_genislik: parseFloat($("d_tabaka").value) || 0,
         bosluk: parseFloat($("d_bosluk").value) || 5 });
       if (r.hata) { $("d_durum").innerHTML = `<span class="uyari">${r.hata}</span>`; return; }
-      doc.veri.oncesi = r.oncesi; doc.veri.sonrasi = r.sonrasi;
-      doc.veri.riskli_handlelar = [];
+      doc.veri = Object.assign({}, doc.veri,
+        { oncesi: r.oncesi, sonrasi: r.sonrasi, riskli_handlelar: [] });
+      onizEkle(doc, `nesting (${r.parca_sayisi})`);
       dxfCiz(doc);
       $("d_nestbilgi").style.display = "inline-block";
       $("d_nestbilgi").textContent =
@@ -271,6 +309,31 @@ function dxfCiz(doc) {
   const v = doc.veri; if (v.hata) return;
   cizVarliklar("svgOnce", v.oncesi, [], true);
   cizVarliklar("svgSonra", v.sonrasi, v.riskli_handlelar, true);
+  dxfGecmisCiz(doc);
+}
+
+// DXF onizleme gecmisi (her "Yeniden Isle" / "Nesting" bir adim ekler)
+function onizEkle(doc, etiket) {
+  doc.onizGecmis = (doc.onizGecmis || []).slice(0, (doc.onizAktif ?? -1) + 1);
+  doc.onizGecmis.push({ etiket, veri: doc.veri });
+  if (doc.onizGecmis.length > 14) doc.onizGecmis.shift();
+  doc.onizAktif = doc.onizGecmis.length - 1;
+}
+function dxfGecmiseGit(doc, i) {
+  if (i < 0 || i >= doc.onizGecmis.length) return;
+  doc.onizAktif = i; doc.veri = doc.onizGecmis[i].veri;
+  render();     // icerigi (istatistik cipleri dahil) yeniden kur + ciz
+}
+function dxfGecmisCiz(doc) {
+  const kap = $("d_gecmis"); if (!kap || !doc.onizGecmis) return;
+  kap.innerHTML = `<span class="baslik">Onizleme gecmisi</span>`;
+  doc.onizGecmis.forEach((t, i) => {
+    const d = document.createElement("div");
+    d.className = "gadim" + (i === doc.onizAktif ? " aktif" : "");
+    d.innerHTML = `${i + 1}<span class="kk2">${t.etiket}</span>`;
+    d.onclick = () => dxfGecmiseGit(doc, i);
+    kap.appendChild(d);
+  });
 }
 
 // ===================== G-Code gorunumu =====================
@@ -315,7 +378,9 @@ function gcodeIcerik(doc) {
         <div>
           <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — numara=sira, ok=tasima</div>
           <svg class="tuval" id="svgGc"></svg>
+          <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
           <div class="durum" id="g_durum"></div>
+          <div class="gecmis-serit" id="g_gecmis"></div>
         </div>
       </div>
     </div>`;
@@ -334,6 +399,7 @@ function gcodeIcerik(doc) {
     $("g_goster").onclick = () => gcCiz(doc, true);
     $("g_kaydet").onclick = () => gcKaydet(doc);
     gcKarsilastirCiz(doc);
+    gcGecmisCiz(doc);
   }, 0);
   return el;
 }
@@ -359,25 +425,52 @@ async function gcTablariGetir(doc) {
   doc.gc.tablar = r.tablar || null;
 }
 
-function gcAnlik(doc){ doc.gc.gecmis.push(doc.gc.sira.slice()); doc.gc.ileri = []; }
+// Lineer, tiklanabilir gecmis: her adim tarih dizisine yazilir; aktif indeks
+// gezinir (geri/ileri veya serit uzerinde tiklayarak).
+function gcAdimEkle(doc, yeniSira, etiket) {
+  doc.gc.sira = yeniSira.slice();
+  doc.gc.tarih = doc.gc.tarih.slice(0, doc.gc.aktif + 1);
+  doc.gc.tarih.push({ sira: yeniSira.slice(), etiket });
+  doc.gc.aktif = doc.gc.tarih.length - 1;
+  gcCiz(doc); gcGecmisCiz(doc);
+}
+function gcGit(doc, i) {
+  if (i < 0 || i >= doc.gc.tarih.length) return;
+  doc.gc.aktif = i; doc.gc.sira = doc.gc.tarih[i].sira.slice();
+  gcCiz(doc); gcGecmisCiz(doc);
+}
 async function gcSirala(doc, mod) {
   const s = await api("/api/gcode/sirala", { yol: doc.yol, mod });
   if (s.hata) return;
-  gcAnlik(doc); doc.gc.sira = s.sira; gcCiz(doc);
+  const ad = { "sol-alt": "auto", "serpantin": "serpantin", "engel": "engel" }[mod] || mod;
+  gcAdimEkle(doc, s.sira, ad);
 }
 function gcSwap(doc) {
   const g = $("g_swap").value.trim().split(/\s+/);
   const i = parseInt(g[0]) - 1, j = parseInt(g[1]) - 1, n = doc.gc.sira.length;
   if (isNaN(i) || isNaN(j) || i < 0 || j < 0 || i >= n || j >= n) return;
-  gcAnlik(doc); [doc.gc.sira[i], doc.gc.sira[j]] = [doc.gc.sira[j], doc.gc.sira[i]];
-  $("g_swap").value = ""; gcCiz(doc);
+  const a = doc.gc.sira.slice(); [a[i], a[j]] = [a[j], a[i]];
+  $("g_swap").value = ""; gcAdimEkle(doc, a, `${i + 1}↔${j + 1}`);
 }
-function gcTasi(doc, k, h) { gcAnlik(doc);
-  const [b] = doc.gc.sira.splice(k, 1); doc.gc.sira.splice(h, 0, b); gcCiz(doc); }
-function gcGeri(doc){ if (doc.gc.gecmis.length){ doc.gc.ileri.push(doc.gc.sira.slice());
-  doc.gc.sira = doc.gc.gecmis.pop(); gcCiz(doc); } }
-function gcIleri(doc){ if (doc.gc.ileri.length){ doc.gc.gecmis.push(doc.gc.sira.slice());
-  doc.gc.sira = doc.gc.ileri.pop(); gcCiz(doc); } }
+function gcTasi(doc, k, h) {
+  const a = doc.gc.sira.slice(); const [b] = a.splice(k, 1); a.splice(h, 0, b);
+  gcAdimEkle(doc, a, `taşı ${k + 1}→${h + 1}`);
+}
+function gcGeri(doc) { if (doc.gc.aktif > 0) gcGit(doc, doc.gc.aktif - 1); }
+function gcIleri(doc) { if (doc.gc.aktif < doc.gc.tarih.length - 1) gcGit(doc, doc.gc.aktif + 1); }
+
+// gecmis seridi
+function gcGecmisCiz(doc) {
+  const kap = $("g_gecmis"); if (!kap) return;
+  kap.innerHTML = `<span class="baslik">Onizleme gecmisi</span>`;
+  doc.gc.tarih.forEach((t, i) => {
+    const d = document.createElement("div");
+    d.className = "gadim" + (i === doc.gc.aktif ? " aktif" : "");
+    d.innerHTML = `${i + 1}<span class="kk2">${t.etiket}</span>`;
+    d.onclick = () => gcGit(doc, i);
+    kap.appendChild(d);
+  });
+}
 
 async function gcKaydet(doc) {
   const s = await api("/api/gcode/kaydet", { yol: doc.yol, sira: doc.gc.sira });
@@ -458,10 +551,46 @@ function gcSvg(doc) {
       "font-size": 11, fill: "var(--metin)", "font-weight": 700 });
     t.textContent = poz + 1;
   });
+  zoomEtkinlestir(svg);
 }
 
 // ===================== SVG yardimcilari =====================
 function svgKur(svg){ while (svg.firstChild) svg.removeChild(svg.firstChild); }
+
+// Tekerlekle yaklastir/uzaklastir + surukleyerek kaydir + cift tik sifirla.
+// Icerik piksel uzayinda (0..W, 0..H) cizilir; viewBox degistirilerek zoom yapilir.
+function zoomEtkinlestir(svg) {
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
+  if (!svg._vb) svg._vb = [0, 0, W, H];
+  const uygula = () => svg.setAttribute("viewBox", svg._vb.join(" "));
+  uygula();
+  if (svg._zoom) return;      // olaylar bir kez baglanir
+  svg._zoom = true;
+  svg.addEventListener("wheel", e => {
+    e.preventDefault();
+    const [x, y, w, h] = svg._vb;
+    const r = svg.getBoundingClientRect();
+    const cx = x + (e.clientX - r.left) / r.width * w;
+    const cy = y + (e.clientY - r.top) / r.height * h;
+    const f = e.deltaY < 0 ? 0.84 : 1.19;
+    let nw = Math.min(Math.max(w * f, W * 0.04), W * 12);
+    const nh = nw * (H / W);
+    svg._vb = [cx - (cx - x) * (nw / w), cy - (cy - y) * (nh / h), nw, nh];
+    uygula();
+  }, { passive: false });
+  let sur = null;
+  svg.addEventListener("pointerdown", e => {
+    sur = [e.clientX, e.clientY]; svg.setPointerCapture(e.pointerId); });
+  svg.addEventListener("pointermove", e => {
+    if (!sur) return;
+    const [x, y, w, h] = svg._vb, r = svg.getBoundingClientRect();
+    svg._vb = [x - (e.clientX - sur[0]) / r.width * w,
+               y - (e.clientY - sur[1]) / r.height * h, w, h];
+    sur = [e.clientX, e.clientY]; uygula();
+  });
+  svg.addEventListener("pointerup", () => { sur = null; });
+  svg.addEventListener("dblclick", () => { svg._vb = [0, 0, W, H]; uygula(); });
+}
 function ekle(svg, tip, attrs){ const e = document.createElementNS(SVGNS, tip);
   for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
 function tumBbox(liste){ let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
@@ -491,6 +620,7 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster){
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,
         fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)","stroke-width":1.5}); }
   });
+  zoomEtkinlestir(svg);
 }
 
 // ===================== toplu isle =====================

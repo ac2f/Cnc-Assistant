@@ -72,9 +72,16 @@ body{
   display:flex;flex-wrap:wrap;gap:3px;align-items:center}
 .yol-cubugu .p{cursor:pointer;padding:2px 5px;border-radius:6px}
 .yol-cubugu .p:hover{background:var(--cizgi);color:var(--metin)}
-.ara-kutu{padding:0 12px 8px}
+.ara-kutu{padding:0 12px 8px;display:flex;gap:6px}
 .ara-kutu .alan{padding:7px 10px;font-size:12.5px}
+.ara-kutu #ara{flex:1}
+.ara-kutu #sirala{width:120px;flex:none;cursor:pointer}
 .gezgin{flex:1;overflow:auto;padding:4px 8px}
+/* son ziyaret edilen klasor vurgusu */
+.oge.son-ziyaret{background:color-mix(in srgb,var(--amber) 16%,transparent);
+  box-shadow:inset 3px 0 0 var(--amber)}
+.oge.son-ziyaret .isim{font-weight:600}
+.oge .saat{margin-left:8px;font-size:10px;color:var(--metin2);flex:none}
 .oge{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:9px;
   cursor:pointer;font-size:13px;transition:background .12s}
 .oge:hover{background:var(--cizgi)}
@@ -232,6 +239,22 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 
 /* tab (koprü) isareti aciklamasi */
 .tab-nokta{fill:#ff9500;stroke:var(--yuzey);stroke-width:1.5}
+
+/* onizleme gecmisi seridi */
+.gecmis-serit{display:flex;gap:6px;align-items:center;flex-wrap:wrap;
+  padding:8px 0 2px;border-top:1px dashed var(--cizgi);margin-top:10px}
+.gecmis-serit .baslik{font-size:11px;color:var(--metin2);margin-right:4px}
+.gadim{font-size:11.5px;padding:5px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--cizgi);background:var(--yuzey2);color:var(--metin2);
+  white-space:nowrap;transition:all .12s}
+.gadim:hover{border-color:var(--acc)}
+.gadim.aktif{background:var(--acc);color:#fff;border-color:var(--acc)}
+.gadim .kk2{opacity:.7;font-size:10px;margin-left:5px}
+
+/* svg zoom ipucu */
+.tuval{cursor:grab}
+.tuval:active{cursor:grabbing}
+.zoom-ipuc{font-size:11px;color:var(--metin2);margin-top:6px}
 
 /* toast bildirimi */
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);

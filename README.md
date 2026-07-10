@@ -172,6 +172,15 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
+**v1.3 yenilikleri:**
+- **Onizleme gecmisi:** her DXF isleme/nesting ve her G-Code siralama/duzenleme
+  adimi tiklanabilir bir **gecmis seridine** yazilir; herhangi bir adima
+  donebilirsiniz (geri/ileri + serit).
+- **Tekerlekle yaklastirma:** onizleme panellerinde **fare tekerlegi** ile
+  zoom, **surukleyerek** kaydirma, **cift tik** ile sifirlama.
+- **Gezginde siralama:** varsayilan **Yeni → Eski** (degistirlebilir: Ad, Tur,
+  Boyut, Eski→Yeni). **En son girilen klasor** farkli renkte (amber) vurgulanir.
+
 - **Dosya gezgini (sol kenar):** klasorler arasinda gezin (ust yol cubugu /
   "Ev" / "Proje" kisayollari), DXF/G-Code dosyalarina tiklayarak acin.
   Elle yol yazmaya gerek yok.

@@ -163,15 +163,17 @@ def api_gozat(veri):
                 continue
             tam = os.path.join(yol, ad)
             try:
+                st = os.stat(tam)
                 if os.path.isdir(tam):
-                    ham_klasorler.append((ad, tam))
+                    ham_klasorler.append((ad, tam, st.st_mtime))
                 elif os.path.isfile(tam):
                     uz = os.path.splitext(ad)[1].lower()
                     tur = ("dxf" if uz == ".dxf"
                            else "gcode" if uz in P.GCODE_UZANTILAR else None)
                     if tur:
                         dosyalar.append({"ad": ad, "yol": tam, "tur": tur,
-                                         "boyut": _boyut_str(os.path.getsize(tam))})
+                                         "boyut": _boyut_str(st.st_size),
+                                         "bayt": st.st_size, "mtime": st.st_mtime})
             except OSError:
                 continue
     except PermissionError:
@@ -180,8 +182,8 @@ def api_gozat(veri):
     # Alt klasor icerik sayimlari (limit dahilinde)
     say = len(ham_klasorler) <= _ALT_KLASOR_SAYIM_LIMITI
     klasorler = []
-    for ad, tam in ham_klasorler:
-        d = {"ad": ad, "yol": tam, "dxf": None, "gcode": None}
+    for ad, tam, mtime in ham_klasorler:
+        d = {"ad": ad, "yol": tam, "mtime": mtime, "dxf": None, "gcode": None}
         if say:
             sonuc = _klasor_say(tam)
             if sonuc is not None:
