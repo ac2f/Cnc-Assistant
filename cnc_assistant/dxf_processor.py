@@ -363,6 +363,14 @@ def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
     msp = doc.modelspace()
     oncesi = varlik_yollari(doc)
     la, ba = _metrikler(doc)
+    # Tabaka olcusunu baslangic optimizasyonuna aktar: cok uzun (riskli) yatay
+    # seritlerin baslangici ust-orta/sag-uste kayar (bkz. geometry).
+    opts = dict(opts)
+    _gen = _ezbbox.extents(msp)
+    if _gen.has_data:
+        opts.setdefault("tabaka_w", _gen.extmax.x - _gen.extmin.x)
+        opts.setdefault("tabaka_h", _gen.extmax.y - _gen.extmin.y)
+    opts.setdefault("boyut_orani", boyut_orani)
     stats = adim1_baslangic_optimizasyonu(msp, opts)
     print("-" * 62)
     riskli = adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani)
