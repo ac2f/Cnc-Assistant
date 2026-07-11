@@ -379,23 +379,61 @@ def api_gcode_kaydet(veri):
             "bosta_yol": d["prog"].bosta_yol()}
 
 
-def api_dxf_pdf(veri):
-    """Onizlemeyi (oncesi + sonrasi) GERCEK VEKTOREL PDF olarak uretir."""
+_ONIZ_FORMATLAR = {"pdf", "png", "svg"}
+_ONIZ_PANEL_ETIKET = {"birlikte": "onizleme", "oncesi": "oncesi",
+                      "sonrasi": "sonrasi"}
+
+
+def _oniz_varliklar(veri):
+    """Onizleme icin ONCESI/SONRASI varliklarini (bellek/onbellek) getirir."""
     yol = veri["yol"]
     o = _DXF_ONIZLE.get(yol)
     if o is None:
         if not os.path.isfile(yol):
-            return {"hata": f"Dosya yok: {yol}"}
+            return None, {"hata": f"Dosya yok: {yol}"}
         s = D.optimize_doc(yol, _dxf_opts(veri))
         o = {"oncesi": s["oncesi"], "sonrasi": s["sonrasi"],
              "riskli": s["riskli_handlelar"]}
-    kok, _ = os.path.splitext(yol)
-    pdf = f"{kok}_onizleme.pdf"
-    ok = PV.baslangic_oncesi_sonrasi(o["oncesi"], o["sonrasi"], o["riskli"], pdf)
+    return o, None
+
+
+def api_dxf_onizleme(veri):
+    """Onizlemeyi kullanicinin sectigi stil/panel/formatta uretir.
+
+    veri: yol, dxf opts, ayrica:
+      stil    : {cizgi_kalinlik, vektor_renk, riskli_renk, bas_renk, bas_boyut,
+                 numara, numara_boyut, izgara}
+      paneller: "birlikte" | "oncesi" | "sonrasi"  (varsayilan birlikte)
+      format  : "pdf" | "png" | "svg"              (varsayilan pdf)
+    Doner: {dosya, indir} veya {hata}."""
+    o, hata = _oniz_varliklar(veri)
+    if hata:
+        return hata
+    paneller = veri.get("paneller", "birlikte")
+    if paneller not in _ONIZ_PANEL_ETIKET:
+        paneller = "birlikte"
+    fmt = str(veri.get("format", "pdf")).lower()
+    if fmt not in _ONIZ_FORMATLAR:
+        fmt = "pdf"
+    stil = veri.get("stil") or None
+    kok, _ = os.path.splitext(veri["yol"])
+    cikti = f"{kok}_{_ONIZ_PANEL_ETIKET[paneller]}.{fmt}"
+    ok = PV.onizleme_uret(o["oncesi"], o["sonrasi"], o["riskli"], cikti,
+                          paneller=paneller, stil=stil)
     if not ok:
-        return {"hata": "matplotlib kurulu degil; PDF uretilemedi."}
-    _INDIRILEBILIR.add(os.path.abspath(pdf))
-    return {"pdf": pdf, "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(pdf))}
+        return {"hata": "matplotlib kurulu degil; onizleme uretilemedi."}
+    _INDIRILEBILIR.add(os.path.abspath(cikti))
+    return {"dosya": cikti,
+            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+
+def api_dxf_pdf(veri):
+    """Geriye donuk uc: ONCESI+SONRASI birlikte, PDF (varsayilan stil)."""
+    v = dict(veri); v.setdefault("paneller", "birlikte"); v.setdefault("format", "pdf")
+    r = api_dxf_onizleme(v)
+    if "dosya" in r:
+        r["pdf"] = r["dosya"]
+    return r
 
 
 def api_dxf_nest(veri):
@@ -560,6 +598,7 @@ API = {
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
     "/api/dxf/pdf": api_dxf_pdf,
+    "/api/dxf/onizleme": api_dxf_onizleme,
     "/api/dxf/nest": api_dxf_nest,
     "/api/gcode/yukle": api_gcode_yukle,
     "/api/gcode/sirala": api_gcode_sirala,
@@ -624,6 +663,7 @@ class Isleyici(BaseHTTPRequestHandler):
             veri = f.read()
         tur = ("application/pdf" if hedef.endswith(".pdf")
                else "image/svg+xml" if hedef.endswith(".svg")
+               else "image/png" if hedef.endswith(".png")
                else "application/octet-stream")
         self.send_response(200)
         self.send_header("Content-Type", tur)

@@ -20,6 +20,13 @@ const AYAR = {
   yaz(k, v) { try { localStorage.setItem("cnc_" + k, JSON.stringify(v)); } catch (e) {} },
 };
 
+// Onizleme gorsel ayarlari (kalici; bir sonraki optimizasyonda da ayni kalir).
+const ONIZ_VARSAYILAN = { cizgi_kalinlik: 0.9, vektor_renk: "#1f77b4",
+  riskli_renk: "#d62728", bas_renk: "#2ca02c", bas_boyut: 5, numara: false,
+  numara_boyut: 6, izgara: true, format: "pdf" };
+const onizAyarAl = () => Object.assign({}, ONIZ_VARSAYILAN, AYAR.al("onizAyar", {}));
+const onizAyarYaz = o => AYAR.yaz("onizAyar", o);
+
 // ===================== tema =====================
 function temaUygula(t) { document.documentElement.setAttribute("data-tema", t); AYAR.yaz("tema", t); }
 $("temaBtn").onclick = () => {
@@ -272,9 +279,38 @@ function dxfIcerik(doc) {
         <label class="anahtar"><input type="checkbox" id="d_temiz" ${p.node_temiz?"checked":""}>
           <span class="kutu"></span> Node temizligi</label>
         <div style="flex:1"></div>
-        <button class="dugme hayalet" id="d_pdf">PDF (vektorel)</button>
+        <button class="dugme hayalet" id="d_ayarAc">Onizleme ayarlari ▾</button>
         <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
         <button class="dugme" id="d_kaydet">Optimize DXF'i Kaydet</button>
+      </div>
+      <div class="arac" id="d_onizAyar" style="margin-top:10px;flex-wrap:wrap;gap:14px;display:none">
+        <div class="grup"><label>Vektor cizgi genisligi</label>
+          <input type="number" step="0.1" min="0.1" class="alan kk" id="oz_cizgi"></div>
+        <div class="grup"><label>Vektor rengi</label>
+          <input type="color" class="alan kk" id="oz_vrenk" style="width:52px;padding:2px"></div>
+        <div class="grup"><label>Riskli vektor rengi</label>
+          <input type="color" class="alan kk" id="oz_rrenk" style="width:52px;padding:2px"></div>
+        <div class="grup"><label>Baslangic noktasi rengi</label>
+          <input type="color" class="alan kk" id="oz_brenk" style="width:52px;padding:2px"></div>
+        <div class="grup"><label>Baslangic noktasi boyutu</label>
+          <input type="number" step="0.5" min="1" class="alan kk" id="oz_bboyut"></div>
+        <label class="anahtar"><input type="checkbox" id="oz_numara">
+          <span class="kutu"></span> Parca numaralari</label>
+        <div class="grup"><label>Numara boyutu</label>
+          <input type="number" step="0.5" min="2" class="alan kk" id="oz_nboyut"></div>
+        <label class="anahtar"><input type="checkbox" id="oz_izgara">
+          <span class="kutu"></span> Izgara</label>
+      </div>
+      <div class="arac" id="d_indirSatir" style="margin-top:8px;align-items:center;gap:10px">
+        <div class="grup"><label>Indirme formati</label>
+          <select class="alan kk" id="oz_format" style="width:90px">
+            <option value="pdf">PDF</option><option value="png">PNG</option>
+            <option value="svg">SVG</option></select></div>
+        <span style="opacity:.7;font-size:13px">Indir:</span>
+        <button class="dugme hayalet" id="d_ind_once">Oncesi</button>
+        <button class="dugme hayalet" id="d_ind_sonra">Sonrasi</button>
+        <button class="dugme" id="d_ind_birlikte">Birlikte</button>
+        <div style="flex:1"></div>
       </div>
       <div class="arac" style="margin-top:12px;align-items:center">
         <div class="grup"><label>Nesting tabaka genisligi (0 = otomatik)</label>
@@ -313,14 +349,42 @@ function dxfIcerik(doc) {
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
     $("d_yeniden").onclick = () => yukle(doc);
-    $("d_pdf").onclick = async () => {
-      $("d_durum").innerHTML = `<span class="yukleniyor"></span> PDF uretiliyor…`;
-      const r = await api("/api/dxf/pdf", { yol: doc.yol, destek_yonu: p.destek,
-        node_tol: p.node_tol, node_temizle: p.node_temiz });
-      if (r.hata) { $("d_durum").innerHTML = `<span class="uyari">${r.hata}</span>`; return; }
-      $("d_durum").innerHTML = `<span class="ok">PDF hazir:</span> ${r.pdf} — indiriliyor…`;
-      window.location.href = r.indir;      // ONCESI+SONRASI vektorel PDF indir
+    // --- Onizleme ayarlari (kalici: localStorage 'onizAyar') ---
+    const oz = onizAyarAl();
+    $("oz_cizgi").value = oz.cizgi_kalinlik; $("oz_vrenk").value = oz.vektor_renk;
+    $("oz_rrenk").value = oz.riskli_renk;    $("oz_brenk").value = oz.bas_renk;
+    $("oz_bboyut").value = oz.bas_boyut;     $("oz_numara").checked = oz.numara;
+    $("oz_nboyut").value = oz.numara_boyut;  $("oz_izgara").checked = oz.izgara;
+    $("oz_format").value = oz.format;
+    const ozKaydet = () => onizAyarYaz({
+      cizgi_kalinlik: parseFloat($("oz_cizgi").value) || 0.9,
+      vektor_renk: $("oz_vrenk").value, riskli_renk: $("oz_rrenk").value,
+      bas_renk: $("oz_brenk").value, bas_boyut: parseFloat($("oz_bboyut").value) || 5,
+      numara: $("oz_numara").checked, numara_boyut: parseFloat($("oz_nboyut").value) || 6,
+      izgara: $("oz_izgara").checked, format: $("oz_format").value });
+    ["oz_cizgi","oz_vrenk","oz_rrenk","oz_brenk","oz_bboyut","oz_numara",
+     "oz_nboyut","oz_izgara","oz_format"].forEach(id =>
+      $(id).addEventListener("change", ozKaydet));
+    $("d_ayarAc").onclick = () => {
+      const g = $("d_onizAyar"); const acik = g.style.display !== "none";
+      g.style.display = acik ? "none" : "flex";
+      $("d_ayarAc").textContent = acik ? "Onizleme ayarlari ▾" : "Onizleme ayarlari ▴";
     };
+    const onizIndir = async (panel) => {
+      const o = onizAyarAl();
+      $("d_durum").innerHTML = `<span class="yukleniyor"></span> Onizleme uretiliyor…`;
+      const r = await api("/api/dxf/onizleme", { yol: doc.yol, destek_yonu: p.destek,
+        node_tol: p.node_tol, node_temizle: p.node_temiz, paneller: panel, format: o.format,
+        stil: { cizgi_kalinlik: o.cizgi_kalinlik, vektor_renk: o.vektor_renk,
+          riskli_renk: o.riskli_renk, bas_renk: o.bas_renk, bas_boyut: o.bas_boyut,
+          numara: o.numara, numara_boyut: o.numara_boyut, izgara: o.izgara } });
+      if (r.hata) { $("d_durum").innerHTML = `<span class="uyari">${r.hata}</span>`; return; }
+      $("d_durum").innerHTML = `<span class="ok">Hazir:</span> ${r.dosya} — indiriliyor…`;
+      window.location.href = r.indir;
+    };
+    $("d_ind_once").onclick = () => onizIndir("oncesi");
+    $("d_ind_sonra").onclick = () => onizIndir("sonrasi");
+    $("d_ind_birlikte").onclick = () => onizIndir("birlikte");
     $("d_kaydet").onclick = async () => {
       const r = await api("/api/dxf/kaydet", { yol: doc.yol });
       $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`

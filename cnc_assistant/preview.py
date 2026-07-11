@@ -93,24 +93,74 @@ def _komut_path(d):
     return Path(verts, codes) if verts else None
 
 
-def _kontur_ciz(ax, varliklar, riskli_handlelar, baslangic_etiketi=True):
+# Onizleme gorsel ayarlari (kullanici arayuzunden gelir; hepsi kalicidir).
+VARSAYILAN_STIL = {
+    "cizgi_kalinlik": 0.9,      # vektor cizgi genisligi
+    "riskli_kalinlik": 1.6,     # riskli vektor cizgi genisligi
+    "vektor_renk": "#1f77b4",   # normal vektor rengi
+    "riskli_renk": "#d62728",   # riskli vektor rengi
+    "bas_renk": "#2ca02c",      # baslangic noktasi rengi
+    "bas_boyut": 5.0,           # baslangic noktasi boyutu (marker)
+    "numara": False,            # parca numaralari goster
+    "numara_boyut": 6.0,        # numara font boyutu
+    "izgara": True,             # arka plan izgarasi
+}
+
+
+def _stil(stil):
+    s = dict(VARSAYILAN_STIL)
+    if stil:
+        s.update({k: v for k, v in stil.items() if v is not None})
+    return s
+
+
+def _numaralandir(varliklar):
+    """Parcalari okuma sirasina (ust->alt, sol->sag) gore numaralandirir.
+    Doner: {id(varlik) -> numara}. Numaralar ONCESI/SONRASI'da tutarli olsun
+    diye merkez konumundan uretilir (baslangic degil)."""
+    merkez = []
+    for v in varliklar:
+        pts = _komut_flatten(v["d"]) if "d" in v else v.get("kontur") or []
+        if not pts:
+            merkez.append((v, 0, 0)); continue
+        xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+        merkez.append((v, (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2))
+    if not merkez:
+        return {}
+    ys_all = [m[2] for m in merkez]
+    span = (max(ys_all) - min(ys_all)) or 1.0
+    satir = span / 24.0 or 1.0
+    merkez.sort(key=lambda m: (-round(m[2] / satir), m[1]))
+    return {id(v): i + 1 for i, (v, _cx, _cy) in enumerate(merkez)}
+
+
+def _kontur_ciz(ax, varliklar, riskli_handlelar, stil,
+                baslangic_etiketi=True, numaralar=None):
     from matplotlib.patches import PathPatch
     for v in varliklar:
         riskli = v["handle"] in riskli_handlelar
-        renk = "#d62728" if riskli else "#1f77b4"
+        renk = stil["riskli_renk"] if riskli else stil["vektor_renk"]
+        lw = stil["riskli_kalinlik"] if riskli else stil["cizgi_kalinlik"]
         if "d" in v:
             p = _komut_path(v["d"])
             if p is not None:
-                ax.add_patch(PathPatch(p, fill=False, edgecolor=renk,
-                                       lw=1.6 if riskli else 0.9))
+                ax.add_patch(PathPatch(p, fill=False, edgecolor=renk, lw=lw))
         else:
             pts = v.get("kontur") or []
             if pts:
                 ax.plot([q[0] for q in pts], [q[1] for q in pts],
-                        color=renk, lw=1.6 if riskli else 0.9)
+                        color=renk, lw=lw)
         if baslangic_etiketi and v["baslangic"] is not None:
             ax.plot(v["baslangic"][0], v["baslangic"][1], "o",
-                    color="#2ca02c", ms=5, zorder=5)
+                    color=stil["bas_renk"], ms=stil["bas_boyut"], zorder=5)
+        if numaralar is not None and id(v) in numaralar:
+            pts = _komut_flatten(v["d"]) if "d" in v else v.get("kontur") or []
+            if pts:
+                xs = [q[0] for q in pts]; ys = [q[1] for q in pts]
+                ax.annotate(str(numaralar[id(v)]),
+                            ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2),
+                            fontsize=stil["numara_boyut"], color="#1f3d99",
+                            ha="center", va="center", weight="bold", zorder=6)
     # PathPatch'ler otomatik olceklenmez -> sinirlari komut koordlarindan kur
     xs, ys = [], []
     for v in varliklar:
@@ -121,35 +171,62 @@ def _kontur_ciz(ax, varliklar, riskli_handlelar, baslangic_etiketi=True):
         ax.set_xlim(min(xs) - pad, max(xs) + pad)
         ax.set_ylim(min(ys) - pad, max(ys) + pad)
     ax.set_aspect("equal")
-    ax.grid(True, alpha=0.25)
+    ax.grid(bool(stil["izgara"]), alpha=0.25)
+
+
+def onizleme_uret(oncesi_varliklar, sonrasi_varliklar, riskli_handlelar,
+                  cikti_yol, paneller="birlikte", stil=None, baslik=True):
+    """Baslangic ONCESI/SONRASI onizlemesini uretir. Cikti formati dosya
+    uzantisindan belirlenir (.pdf / .png / .svg).
+
+    paneller: "birlikte" (yan yana ikisi), "oncesi" (yalniz oncesi),
+              "sonrasi" (yalniz sonrasi).
+    stil    : gorsel ayarlar (bkz. VARSAYILAN_STIL); None -> varsayilan.
+    Doner: basari (True/False)."""
+    plt = _matplotlib()
+    if plt is None:
+        print("[Onizleme] matplotlib kurulu degil (pip install matplotlib).")
+        return False
+    s = _stil(stil)
+    numaralar = _numaralandir(sonrasi_varliklar) if s["numara"] else None
+
+    if paneller == "birlikte":
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+        _kontur_ciz(ax1, oncesi_varliklar, set(), s, numaralar=numaralar)
+        ax1.set_title("ONCESI - orijinal baslangic noktalari")
+        _kontur_ciz(ax2, sonrasi_varliklar, riskli_handlelar, s,
+                    numaralar=numaralar)
+        ax2.set_title("SONRASI - optimize baslangic + riskli parca")
+        ax2.plot([], [], "o", color=s["bas_renk"], label="Yeni kesim baslangici")
+        ax2.plot([], [], color=s["riskli_renk"], label="Riskli parca (hold-down)")
+        ax2.legend(loc="upper right", fontsize=8)
+        if baslik:
+            fig.suptitle("Baslangic Noktasi Optimizasyonu", fontsize=13)
+    else:
+        oncesi = (paneller == "oncesi")
+        fig, ax = plt.subplots(figsize=(12, 9))
+        _kontur_ciz(ax, oncesi_varliklar if oncesi else sonrasi_varliklar,
+                    set() if oncesi else riskli_handlelar, s,
+                    numaralar=numaralar)
+        ax.set_title("ONCESI - orijinal baslangic" if oncesi
+                     else "SONRASI - optimize baslangic")
+        if not oncesi:
+            ax.plot([], [], "o", color=s["bas_renk"], label="Yeni baslangic")
+            ax.plot([], [], color=s["riskli_renk"], label="Riskli parca")
+            ax.legend(loc="upper right", fontsize=8)
+
+    fig.tight_layout()
+    _kaydet(fig, cikti_yol)
+    plt.close(fig)
+    print(f"[Onizleme] {paneller} -> {cikti_yol}")
+    return True
 
 
 def baslangic_oncesi_sonrasi(oncesi_varliklar, sonrasi_varliklar,
-                             riskli_handlelar, png_yol):
-    """Iki panelli ONCESI / SONRASI baslangic noktasi gorseli."""
-    plt = _matplotlib()
-    if plt is None:
-        print("[Onizleme] matplotlib kurulu degil, PNG uretilmedi "
-              "(istege bagli: pip install matplotlib)")
-        return False
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-    _kontur_ciz(ax1, oncesi_varliklar, set())
-    ax1.set_title("ONCESI - orijinal baslangic noktalari")
-    _kontur_ciz(ax2, sonrasi_varliklar, riskli_handlelar)
-    ax2.set_title("SONRASI - optimize baslangic (yesil) + riskli parca (kirmizi)")
-
-    ax2.plot([], [], "o", color="#2ca02c", label="Yeni kesim baslangici")
-    ax2.plot([], [], color="#d62728", label="Riskli parca (hold-down onerilir)")
-    ax2.legend(loc="upper right", fontsize=8)
-
-    fig.suptitle("Baslangic Noktasi Optimizasyonu (kontrol amaclidir)",
-                 fontsize=13)
-    fig.tight_layout()
-    _kaydet(fig, png_yol)
-    plt.close(fig)
-    print(f"[Onizleme] Oncesi/Sonrasi gorseli: {png_yol}")
-    return True
+                             riskli_handlelar, png_yol, stil=None):
+    """Geriye donuk uyumlu sarmalayici: iki panelli ONCESI/SONRASI gorseli."""
+    return onizleme_uret(oncesi_varliklar, sonrasi_varliklar, riskli_handlelar,
+                         png_yol, paneller="birlikte", stil=stil)
 
 
 def vektor_pdf(varliklar, yol, baslik="Nesting", vurgu_handlelar=None):
@@ -159,7 +236,8 @@ def vektor_pdf(varliklar, yol, baslik="Nesting", vurgu_handlelar=None):
     if plt is None:
         return False
     fig, ax = plt.subplots(figsize=(12, 9))
-    _kontur_ciz(ax, varliklar, vurgu_handlelar or set(), baslangic_etiketi=False)
+    _kontur_ciz(ax, varliklar, vurgu_handlelar or set(), _stil(None),
+                baslangic_etiketi=False)
     ax.set_title(baslik)
     fig.tight_layout()
     _kaydet(fig, yol)

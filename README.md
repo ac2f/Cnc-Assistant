@@ -198,10 +198,17 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
 - **Web gezgininde klasor islemleri:** "+ Klasor" ile olusturma, her klasorde
   ✎ yeniden adlandirma ve 🗑 silme (yol-gezme engelli, ev/kok korumali).
 
+**v1.7 yenilikleri:**
+- **Ozellestirebilir onizleme disari aktarma:** DXF onizlemesinde "Onizleme
+  ayarlari" ile vektor cizgi genisligi, vektor/riskli/baslangic renkleri,
+  baslangic noktasi boyutu, parca numaralari ve izgara ayarlanir. ONCESI ve
+  SONRASI **ayri ayri ya da birlikte**, **PDF / PNG / SVG** formatlarinda
+  indirilebilir. Tum ayarlar **kalicidir** (tarayicida saklanir; bir sonraki
+  optimizasyonda da ayni kalir).
+
 **v1.6 yenilikleri:**
-- **Vektorel PDF disari aktarma:** DXF onizlemesinde "PDF (vektorel)" butonu
-  ONCESI+SONRASI panellerini gercek bezier egrileriyle tek PDF olarak indirir
-  (sonsuz yaklastirmada net).
+- **Vektorel PDF disari aktarma:** DXF onizlemesinde ONCESI+SONRASI panellerini
+  gercek bezier egrileriyle PDF olarak indirir (sonsuz yaklastirmada net).
 - **Gelismis Nesting sekmesi** (ust bardaki ⊞ Nesting): gercek-sekil (raster)
   yerlesim. Parcalar DXF'ten (her kapali kontur) veya olcu vererek
   (dikdortgen/daire) + ADET; tabakalar **coklu** ve **sabit dikdortgen/daire ya
