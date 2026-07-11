@@ -38,19 +38,25 @@ UZUN_INCE_ORAN = 0.18
 # Kose-civari aday bolge yaricapi: bbox kosegeninin bu orani.
 KOSE_TOL_ORANI = 0.15
 
-# BASLANGIC (lead-in) hedefi -- normal parcalar icin, parcanin GERCEK UST
-# konturu (ust zarf) uzerinde SOLDAN bu oranda bir nokta hedeflenir (0 = sol
-# kenar, 1 = sag kenar). Nokta daima gercek ust konturun uzerine oturur -> egik
-# "N" gibi parcalarda ust kenarin altindaki egime DEGIL, gercek uste denk gelir.
-BASLANGIC_X_ORANI = 0.18
+# BASLANGIC (lead-in) hedefi -- normal parcalar icin, parcanin GERCEK EN UST
+# bolgesi (ust bant kosusu) ICINDE, o bolgenin SOLUNDAN bu oranda bir nokta
+# hedeflenir (0 = bolgenin sol ucu, 1 = sag ucu). Nokta daima gercek ust kontura
+# oturur -> egik "N" gibi parcalarda egime DEGIL, gercek uste denk gelir.
+BASLANGIC_X_ORANI = 0.22
 
-# Kose kacinma payi (bbox eninin orani): hedef X, en yakin ust-kontur kose
-# vertex'ine bu mesafeden yakinsa, nokta o koseden ic tarafa (kenarin duz
-# kismina) itilir -> baslangic "tam kosede" degil, koseden az iceride durur.
+# Kose kacinma payi (bbox eninin orani): baslangic, ust bolgenin uc (kose)
+# noktalarindan en az bu kadar iceride tutulur -> "tam kosede" degil, az iceride.
 BASLANGIC_KOSE_PAYI = 0.05
 
-# Ust-kontur (zarf) hesabinda "ust vertex" band'i (bbox yuksekliginin orani).
-UST_BANT_ORANI = 0.15
+# Ust bant kalinligi (bbox yuksekliginin orani): parcanin y >= ymax - bu*bant
+# olan bolgeleri "en ust" sayilir. KUCUK tutulur (~%8) -> baslangic her zaman
+# gercek tepeye cok yakin oturur; parcanin gobegine/egimine asla dusmez.
+UST_BANT_ORANI = 0.08
+
+# Ust bolge (kose) aday esigi: bir ust bolge, bbox eninin bu orani kadar
+# genisse "kayda deger" sayilir (kucuk sivri tepeler yerine gercek ust kenar
+# tercih edilir). Tek bolge varsa yine o kullanilir.
+MIN_KOSE_ORANI = 0.06
 
 # Dikey ince serit parcalarda baslangic: SAG kenar (sag zarf) uzerinde, alttan
 # bu oranda -> sag-orta ile sag-alt arasi (serit kesilirken destekli kalir).
@@ -448,33 +454,81 @@ def sag_kontur_x(pts, Y):
     return best
 
 
+def ust_kosular(pts, ythr, w):
+    """Parcanin ust bant (y >= ythr) icindeki GERCEK ust kontur parcalarini
+    (X araliklari) doner: [(x_sol, x_sag), ...]. Duz ve yay segmentleri ele
+    alinir. Yakin araliklar birlestirilir. Bu, parcanin 'en ust bolgeleri'ni
+    verir -> baslangic daima bu bolgelerden birine (gercek ustune) oturur,
+    parcanin gobegine/egimine DEGIL."""
+    ints = []
+    n = len(pts)
+    for i in range(n):
+        p1, p2 = pts[i], pts[(i + 1) % n]
+        if abs(p1[4]) < 1e-12:
+            x1, y1, x2, y2 = p1[0], p1[1], p2[0], p2[1]
+            if max(y1, y2) < ythr:
+                continue
+            if min(y1, y2) >= ythr:
+                ints.append((min(x1, x2), max(x1, x2)))
+            elif abs(y2 - y1) > 1e-12:
+                t = (ythr - y1) / (y2 - y1)
+                xc = x1 + t * (x2 - x1)
+                a, b = (x1, xc) if y1 >= ythr else (xc, x2)
+                ints.append((min(a, b), max(a, b)))
+        else:
+            prm = _yay_parametreleri(p1, p2)
+            if prm is None:
+                continue
+            cx, cy, r, a1, a2, ccw = prm
+            TAU = 2 * math.pi
+            sweep = ((a2 - a1) % TAU) if ccw else -((a1 - a2) % TAU)
+            k = 24
+            run = []
+            for j in range(k + 1):
+                ang = a1 + sweep * j / k
+                x, y = cx + r * math.cos(ang), cy + r * math.sin(ang)
+                if y >= ythr:
+                    run.append(x)
+                elif run:
+                    ints.append((min(run), max(run)))
+                    run = []
+            if run:
+                ints.append((min(run), max(run)))
+    if not ints:
+        return []
+    ints.sort()
+    gap = 0.02 * w
+    merged = [list(ints[0])]
+    for a, b in ints[1:]:
+        if a <= merged[-1][1] + gap:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    return [(a, b) for a, b in merged]
+
+
 def _baslangic_hedef_nokta(pts, **kw):
     """Baslangicin idealde OLMASI gereken noktayi (parcanin GERCEK konturu
     uzerinde) ve konturdaki segmentini doner.
 
     Doner: (tx, ty, seg_idx, yay_mi, uzun_ince)
-      * Dikey ince serit: SAG kontur uzerinde, alttan `serit_y` (sag-orta ile
-        sag-alt arasi) -> serit kesilirken destekli kalir.
-      * Cok uzun (riskli) yatay serit: UST kontur uzerinde, soldan
+
+    YONTEM (kritik): once parcanin GERCEK EN UST bolgeleri (ust bant kosulari)
+    bulunur; baslangic DAIMA bu bolgelerden birine oturur. Boylece parcanin
+    gobegine/egimine (egik "N"in inen kenarina, "V"nin dibine) ASLA dusmez.
+
+      * Dikey ince serit: SAG kontur uzerinde, alttan `serit_y` (sag-orta/alt).
+      * Cok uzun (riskli) yatay serit: en genis ust bolgede, soldan
         `YATAY_SERIT_X_ORANI` (ust-orta ile sag-ust arasi).
-      * Normal parca: UST kontur uzerinde, soldan `frac_x` (varsayilan sol-ust
-        ~%18). Nokta daima gercek ust konturun uzerine oturur (egime degil).
-    Her durumda hedef X, en yakin ust-kontur kose vertex'inden `BASLANGIC_KOSE_PAYI`
-    kadar ic tarafa itilir -> "tam kosede" degil, koseden az iceride durur."""
+      * Normal parca: EN SOLDAKI yeterince genis ust bolgede, o bolgenin
+        solundan `BASLANGIC_X_ORANI` kadar iceride (kosede degil). Nokta o
+        X'teki gercek ust kontura (ust zarf) oturur."""
     xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
     uzun_ince = uzun_ince_mi(w, h)
+    serit_y = kw.get("serit_y_orani", SERIT_Y_ORANI)
 
     d = kw.get("destek_yonu", DESTEK_YONU)
     dx = d[0] if d else -1.0
-    if "bas_x_orani" in kw:
-        frac_x = kw["bas_x_orani"]
-    elif dx < -0.05:
-        frac_x = BASLANGIC_X_ORANI            # sol-ust
-    elif dx > 0.05:
-        frac_x = 1.0 - BASLANGIC_X_ORANI      # sag-ust
-    else:
-        frac_x = 0.5                          # orta-ust
-    serit_y = kw.get("serit_y_orani", SERIT_Y_ORANI)
 
     # 1) Dikey ince serit -> sag kontur, sag-orta/sag-alt.
     if uzun_ince and h > w:
@@ -484,28 +538,45 @@ def _baslangic_hedef_nokta(pts, **kw):
             return r[0], ty, r[1], r[2], uzun_ince
         return xmax, ty, None, False, uzun_ince
 
-    # 2) Cok uzun/riskli yatay serit -> ust kontur, orta-sag.
+    # 2) Gercek ust bolgeler (ust bant kosulari).
+    band = kw.get("ust_bant_orani", UST_BANT_ORANI)
+    kosular = ust_kosular(pts, ymax - band * h, w) if h > 1e-12 else []
+    if not kosular:
+        tx = xmin + BASLANGIC_X_ORANI * w
+        r = ust_kontur_y(pts, tx)
+        return (tx, r[0] if r else ymax,
+                r[1] if r else None, r[2] if r else False, uzun_ince)
+
+    # 3) Cok uzun/riskli yatay serit -> en genis bolgede, orta-sag.
     tabaka_w = kw.get("tabaka_w")
     boyut_orani = kw.get("boyut_orani", 0.50)
     riskli_yatay = (w > h and tabaka_w and tabaka_w > 0
                     and (w / tabaka_w) > boyut_orani)
-    if riskli_yatay and "bas_x_orani" not in kw:
-        frac_x = kw.get("yatay_serit_x_orani", YATAY_SERIT_X_ORANI)
 
-    # 3) Normal parca -> ust kontur, soldan frac_x; koseden ic tarafa it.
-    tx = xmin + frac_x * w
-    kose_payi = kw.get("kose_payi_orani", BASLANGIC_KOSE_PAYI) * w
-    ythr = ymax - kw.get("ust_bant_orani", UST_BANT_ORANI) * h
-    en_yakin = None
-    for p in pts:
-        if p[1] >= ythr:
-            dd = abs(p[0] - tx)
-            if en_yakin is None or dd < en_yakin[0]:
-                en_yakin = (dd, p[0])
-    if en_yakin is not None and en_yakin[0] < kose_payi:
-        merkez = (xmin + xmax) / 2.0
-        tx = en_yakin[1] + kose_payi if tx <= merkez else en_yakin[1] - kose_payi
-        tx = max(xmin, min(xmax, tx))
+    if riskli_yatay and "bas_x_orani" not in kw:
+        a, b = max(kosular, key=lambda ab: ab[1] - ab[0])
+        frac = kw.get("yatay_serit_x_orani", YATAY_SERIT_X_ORANI)
+        tx = a + frac * (b - a)
+    else:
+        # Hedef X orani (bolge ICINDE soldan): destek_yonu'nun dx isaretine gore.
+        if "bas_x_orani" in kw:
+            frac = kw["bas_x_orani"]
+        elif dx > 0.05:
+            frac = 1.0 - BASLANGIC_X_ORANI
+        elif abs(dx) <= 0.05:
+            frac = 0.5
+        else:
+            frac = BASLANGIC_X_ORANI
+        # Aday bolge: yeterince genis olan EN SOLDAKI (yoksa sagdaki); yon saga
+        # ise en SAGDAKI.
+        min_run = kw.get("min_kose_orani", MIN_KOSE_ORANI) * w
+        genis = [r for r in kosular if (r[1] - r[0]) >= min_run] or kosular
+        a, b = (max(genis, key=lambda ab: ab[1]) if dx > 0.05
+                else min(genis, key=lambda ab: ab[0]))
+        iw = b - a
+        kose_payi = min(kw.get("kose_payi_orani", BASLANGIC_KOSE_PAYI) * w, 0.4 * iw)
+        tx = a + frac * iw
+        tx = max(a + kose_payi, min(tx, b - kose_payi)) if iw > 1e-9 else (a + b) / 2
 
     r = ust_kontur_y(pts, tx)
     if r is not None:

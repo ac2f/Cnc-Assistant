@@ -74,7 +74,7 @@ def test_normal_baslangic_sol_ust():
     hedef = G.hedef_nokta(pts, uzun_ince=False)
     assert abs(hedef[1] - 100) < 1e-9          # ust kenar
     assert 0 <= hedef[0] < 50                    # sol yarim (sol-ust)
-    assert abs(hedef[0] - 18) < 1e-6
+    assert abs(hedef[0] - 22) < 1e-6
 
 
 def test_serit_baslangic_sol_kenar():
@@ -116,13 +116,13 @@ def _efektif_baslangic(pts, i, ekle):
 
 
 def test_baslangic_kucuk_parca_sol_ust_kenar_ekler():
-    # Sade kare: ust konturda hedefe (soldan %18) vertex yok -> tam hedefte
-    # (x=1.44, ust kenar) baslangic node'u eklenir (sekil korunur).
+    # Sade kare: ust bolge [0,8] tum eni kaplar; baslangic bolgenin solundan
+    # %22 -> x=1.76, ust kenar; hedefte vertex yok -> node eklenir (sekil korunur).
     pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert abs(by - 8) < 1e-9              # gercek ust kontur
-    assert abs(bx - 1.44) < 1e-6          # soldan %18 (sol-ust)
+    assert abs(bx - 1.76) < 1e-6          # bolgenin solundan %22 (sol-ust)
     assert ekle is not None               # mid-edge lead-in eklendi
 
 
@@ -149,16 +149,15 @@ def test_baslangic_egik_n_gercek_ustte_kalir():
 
 
 def test_baslangic_kose_payi_tam_kosede_durmaz():
-    # Ust kenarda hedefe cok yakin bir kose vertex'i varsa, baslangic o koseden
-    # az iceride durmali (tam kose vertex'i secilmemeli).
-    # Ust kenar (0,10)-(10,10); hedef X=1.8; (2,10) gercek bir kose (asagi kirilim)
+    # Ust bolge yalnizca [2,10] (x<2 tarafi alcak). Baslangic bu bolgenin sol
+    # ucundan (x=2 kosesi) az iceride, gercek ust kenarda (y=10) durmali.
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0), (10, 10, 0, 0, 0),
            (2, 10, 0, 0, 0), (2, 4, 0, 0, 0), (0, 4, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
-    assert abs(by - 10) < 1e-9             # ust kenar
-    assert bx > 2.3                         # (2,10) kosesinden ic tarafta
-    assert bx < 3.5
+    assert abs(by - 10) < 1e-9             # gercek ust kenar (gobekte degil)
+    assert bx > 2.5                         # (2,10) kosesinden ic tarafta
+    assert bx < 5.0
 
 
 def test_baslangic_sag_ust_secenegi():
@@ -167,7 +166,7 @@ def test_baslangic_sag_ust_secenegi():
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert abs(by - 8) < 1e-9              # ust kenar
-    assert abs(bx - 6.56) < 1e-6          # soldan %82 (sag-ust)
+    assert abs(bx - 6.24) < 1e-6          # bolgenin solundan %78 (sag-ust)
 
 
 def test_baslangic_dikey_serit_sag_kenarda():
