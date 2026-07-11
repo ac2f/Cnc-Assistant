@@ -62,6 +62,16 @@ MIN_KOSE_ORANI = 0.06
 # bu oranda -> sag-orta ile sag-alt arasi (serit kesilirken destekli kalir).
 SERIT_Y_ORANI = 0.35
 
+# Dikey serit / "I" esigi: parca boyunca AZAMI yatay kalinlik / yukseklik bu
+# degerin altindaysa parca "serit" sayilir (bbox oranindan bagimsiz -> serifli
+# "I" de yakalanir). Bunlarin baslangici sag kenar orta-altta olur.
+SERIT_KALINLIK_ORANI = 0.24
+
+# Ust bolge secimi: en genis (en destekli) ust bolge tercih edilir; birden cok
+# bolge bu oranin ustunde genislikteyse destek yonundeki (sol) secilir. Boylece
+# sivri tepe (orn. yan yatik "A"nin ucu) yerine genis/duz ust kenar secilir.
+UST_GENIS_TOLERANS = 0.70
+
 # Cok uzun (kirmizi-onizleme/riskli) YATAY serit parcalarda baslangicin ust
 # kontur uzerindeki yatay konumu (soldan): ust-orta ile sag-ust arasi.
 YATAY_SERIT_X_ORANI = 0.78
@@ -454,6 +464,73 @@ def sag_kontur_x(pts, Y):
     return best
 
 
+def sol_kontur_x(pts, Y):
+    """Verilen Y'de parcanin GERCEK SOL konturunun (sol zarf) x degeri.
+    Doner: (x, seg_idx, yay_mi) veya None."""
+    n = len(pts)
+    best = None
+    for i in range(n):
+        p1, p2 = pts[i], pts[(i + 1) % n]
+        if abs(p1[4]) < 1e-12:
+            x1, y1, x2, y2 = p1[0], p1[1], p2[0], p2[1]
+            lo, hi = (y1, y2) if y1 <= y2 else (y2, y1)
+            if abs(y2 - y1) < 1e-12:
+                if abs(Y - y1) <= 1e-9:
+                    x = min(x1, x2)
+                else:
+                    continue
+            elif lo - 1e-9 <= Y <= hi + 1e-9:
+                t = (Y - y1) / (y2 - y1)
+                x = x1 + t * (x2 - x1)
+            else:
+                continue
+            if best is None or x < best[0]:
+                best = (x, i, False)
+        else:
+            prm = _yay_parametreleri(p1, p2)
+            if prm is None:
+                continue
+            cx, cy, r, a1, a2, ccw = prm
+            d = Y - cy
+            if abs(d) > r + 1e-9:
+                continue
+            xx = math.sqrt(max(0.0, r * r - d * d))
+            for x in (cx + xx, cx - xx):
+                a = math.atan2(Y - cy, x - cx)
+                if _aci_arada(a, a1, a2, ccw) and (best is None or x < best[0]):
+                    best = (x, i, True)
+    return best
+
+
+def azami_yatay_kalinlik_orani(pts, xmin, ymin, w, h, levels=11):
+    """Parcanin yukseklik boyunca AZAMI yatay kalinliginin (sag zarf - sol zarf)
+    yukseklige oranini doner. Dikey serit / "I" gibi harfleri tespit icin:
+    boyunca ince (bu oran kucuk) olanlar serit sayilir. bbox oranindan daha
+    guveniolir -- serifli "I"de bbox genis gorunse de govde incedir."""
+    if h <= 1e-12:
+        return 1.0
+    tmax = 0.0
+    for k in range(1, levels):
+        Y = ymin + h * k / levels
+        sol = sol_kontur_x(pts, Y)
+        sag = sag_kontur_x(pts, Y)
+        if sol is not None and sag is not None:
+            tmax = max(tmax, sag[0] - sol[0])
+    return tmax / h
+
+
+def dikey_serit_mi(pts, w, h, esik=None):
+    """Parca dikey ince serit / "I" benzeri mi? (uzun kenar dusey ve boyunca
+    ince). CNC'de bu parcalarin baslangici SAG kenarda, orta-alt bolgede
+    olmali (iki uctan destekli). bbox oranina degil, boyunca kalinliga bakar."""
+    if h <= w:
+        return False
+    xmin = min(p[0] for p in pts)
+    ymin = min(p[1] for p in pts)
+    esik = SERIT_KALINLIK_ORANI if esik is None else esik
+    return azami_yatay_kalinlik_orani(pts, xmin, ymin, w, h) < esik
+
+
 def ust_kosular(pts, ythr, w):
     """Parcanin ust bant (y >= ythr) icindeki GERCEK ust kontur parcalarini
     (X araliklari) doner: [(x_sol, x_sag), ...]. Duz ve yay segmentleri ele
@@ -517,10 +594,12 @@ def _baslangic_hedef_nokta(pts, **kw):
     bulunur; baslangic DAIMA bu bolgelerden birine oturur. Boylece parcanin
     gobegine/egimine (egik "N"in inen kenarina, "V"nin dibine) ASLA dusmez.
 
-      * Dikey ince serit: SAG kontur uzerinde, alttan `serit_y` (sag-orta/alt).
+      * Dikey ince serit / "I": SAG kontur uzerinde, alttan `serit_y`
+        (sag-orta/sag-alt). Serit tespiti boyunca kalinliga bakar (bbox degil).
       * Cok uzun (riskli) yatay serit: en genis ust bolgede, soldan
         `YATAY_SERIT_X_ORANI` (ust-orta ile sag-ust arasi).
-      * Normal parca: EN SOLDAKI yeterince genis ust bolgede, o bolgenin
+      * Normal parca: EN GENIS (en destekli) ust bolge secilir -> sivri tepe
+        (orn. yan yatik "A"nin ucu) yerine genis/duz ust kenar. O bolgenin
         solundan `BASLANGIC_X_ORANI` kadar iceride (kosede degil). Nokta o
         X'teki gercek ust kontura (ust zarf) oturur."""
     xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
@@ -530,13 +609,16 @@ def _baslangic_hedef_nokta(pts, **kw):
     d = kw.get("destek_yonu", DESTEK_YONU)
     dx = d[0] if d else -1.0
 
-    # 1) Dikey ince serit -> sag kontur, sag-orta/sag-alt.
-    if uzun_ince and h > w:
+    # 1) Dikey ince serit / "I" -> sag kontur, sag-orta/sag-alt. Serit tespiti
+    #    boyunca AZAMI yatay kalinliga bakar (serifli "I" de yakalanir).
+    serit = dikey_serit_mi(pts, w, h,
+                           kw.get("serit_kalinlik_orani", SERIT_KALINLIK_ORANI))
+    if serit:
         ty = ymin + serit_y * h
         r = sag_kontur_x(pts, ty)
         if r is not None:
-            return r[0], ty, r[1], r[2], uzun_ince
-        return xmax, ty, None, False, uzun_ince
+            return r[0], ty, r[1], r[2], True
+        return xmax, ty, None, False, True
 
     # 2) Gercek ust bolgeler (ust bant kosulari).
     band = kw.get("ust_bant_orani", UST_BANT_ORANI)
@@ -567,12 +649,16 @@ def _baslangic_hedef_nokta(pts, **kw):
             frac = 0.5
         else:
             frac = BASLANGIC_X_ORANI
-        # Aday bolge: yeterince genis olan EN SOLDAKI (yoksa sagdaki); yon saga
-        # ise en SAGDAKI.
+        # Aday bolge: EN GENIS (en destekli) ust bolge -> sivri tepe yerine duz
+        # kenar. Birden cok bolge esit genislikteyse (tolerans icinde) destek
+        # yonundekini (sol/sag) sec.
         min_run = kw.get("min_kose_orani", MIN_KOSE_ORANI) * w
         genis = [r for r in kosular if (r[1] - r[0]) >= min_run] or kosular
-        a, b = (max(genis, key=lambda ab: ab[1]) if dx > 0.05
-                else min(genis, key=lambda ab: ab[0]))
+        maxw = max(b0 - a0 for a0, b0 in genis)
+        tol = kw.get("ust_genis_tolerans", UST_GENIS_TOLERANS)
+        adaylar = [r for r in genis if (r[1] - r[0]) >= tol * maxw]
+        a, b = (max(adaylar, key=lambda ab: ab[1]) if dx > 0.05
+                else min(adaylar, key=lambda ab: ab[0]))
         iw = b - a
         kose_payi = min(kw.get("kose_payi_orani", BASLANGIC_KOSE_PAYI) * w, 0.4 * iw)
         tx = a + frac * iw
