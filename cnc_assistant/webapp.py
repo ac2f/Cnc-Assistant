@@ -205,7 +205,7 @@ def api_gozat(veri):
             "klasorler": klasorler, "dosyalar": dosyalar}
 
 
-_DESTEK_YONU = {"sag-ust": (1.0, 1.0), "ust": (0.35, 1.0), "sag": (1.0, 0.35)}
+_DESTEK_YONU = {"sol-ust": (-1.0, 1.0), "ust": (0.0, 1.0), "sag-ust": (1.0, 1.0)}
 
 
 def _guvenli_ad(ad):
@@ -267,8 +267,8 @@ def _dxf_opts(veri):
     return {
         "node_temizle": veri.get("node_temizle", True),
         "node_tol": float(veri.get("node_tol", 1e-6)),
-        "destek_yonu": _DESTEK_YONU.get(veri.get("destek_yonu", "sag-ust"),
-                                        (1.0, 1.0)),
+        "destek_yonu": _DESTEK_YONU.get(veri.get("destek_yonu", "sol-ust"),
+                                        (-1.0, 1.0)),
     }
 
 

@@ -68,22 +68,22 @@ def test_node_sadelestir_genislik_korunur():
     assert any(abs(p[2] - 1.0) < 1e-9 for p in sade)
 
 
-def test_normal_baslangic_orta_ust_ile_sag_ust_arasi():
-    # 100x100 kare -> hedef ust kenarda, x = 75 civari (orta-ust/sag-ust arasi)
+def test_normal_baslangic_sol_ust():
+    # 100x100 kare -> hedef ust kenarda, x = 20 civari (sol-ust bolge)
     pts = [(0, 0), (100, 0), (100, 100), (0, 100)]
     hedef = G.hedef_nokta(pts, uzun_ince=False)
     assert abs(hedef[1] - 100) < 1e-9          # ust kenar
-    assert 50 < hedef[0] < 100                  # orta-ust ile sag-ust arasi
-    assert abs(hedef[0] - 75) < 1e-6
+    assert 0 <= hedef[0] < 50                    # sol yarim (sol-ust)
+    assert abs(hedef[0] - 20) < 1e-6
 
 
-def test_serit_baslangic_sag_kenar():
-    # Dikey serit (10 genis, 100 yuksek) -> hedef sag kenarda (x=10)
+def test_serit_baslangic_sol_kenar():
+    # Dikey serit (10 genis, 100 yuksek) -> hedef sol kenarda (x=0)
     pts = [(0, 0), (10, 0), (10, 100), (0, 100)]
     xmin, ymin, xmax, ymax, w, h = G.bbox_ve_olcu(pts)
     assert G.uzun_ince_mi(w, h)
     hedef = G.hedef_nokta(pts, uzun_ince=True)
-    assert abs(hedef[0] - 10) < 1e-9            # sag kenar
+    assert abs(hedef[0] - 0) < 1e-9             # sol kenar
     assert 0 < hedef[1] < 100                    # dikeyde icerde (destek)
 
 
@@ -108,19 +108,58 @@ def test_destek_ucu_yon_ayarlanabilir():
     assert pts[i] == (50, 90)
 
 
-def test_destek_ucu_kucuk_parca():
-    # 4 vertex'li kucuk parca da sorunsuz
+def _efektif_baslangic(pts, i, ekle):
+    """Test yardimcisi: (i, ekle) sonucundan efektif baslangic (x, y)."""
+    if i is None and ekle is not None:
+        return (ekle[1][0], ekle[1][1])
+    return (pts[i][0], pts[i][1])
+
+
+def test_baslangic_kucuk_parca_sol_ust_kenar_ekler():
+    # Sade kare: ust kenarda hedefe (soldan %20) vertex yok -> tam hedefte
+    # (x=1.6, ust kenar) baslangic node'u eklenir (sekil korunur).
     pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
-    assert (pts[i][0], pts[i][1]) == (8, 8)
-    assert ekle is None          # yeni node EKLENMEZ
+    bx, by = _efektif_baslangic(pts, i, ekle)
+    assert abs(by - 8) < 1e-9              # ust kenar
+    assert abs(bx - 1.6) < 1e-6            # soldan %20 (sol-ust)
+    assert ekle is not None               # mid-edge lead-in eklendi
+
+
+def test_baslangic_nokta_ekleme_kapali_sol_ust_kose():
+    # nokta_ekle=False -> ekleme yok; mevcut en yakin vertex (sol-ust kose)
+    pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts, nokta_ekle=False)
+    assert ekle is None
+    assert (pts[i][0], pts[i][1]) == (0, 8)
+
+
+def test_baslangic_mevcut_vertex_hedefte_snap():
+    # Ust kenarda hedefe (x=2.0) tam oturan vertex varsa yeni node EKLENMEZ.
+    pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0), (10, 10, 0, 0, 0),
+           (2, 10, 0, 0, 0), (0, 10, 0, 0, 0)]
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
+    assert ekle is None
+    assert (pts[i][0], pts[i][1]) == (2, 10)
+
+
+def test_baslangic_sag_ust_secenegi():
+    # destek_yonu saga bakarsa baslangic sag-ust bolgede (soldan %80)
+    pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
+    bx, by = _efektif_baslangic(pts, i, ekle)
+    assert abs(by - 8) < 1e-9              # ust kenar
+    assert abs(bx - 6.4) < 1e-6            # soldan %80 (sag-ust)
 
 
 def test_baslangic_indeksi_serit_dikey():
+    # Dikey serit: sol kenarda, ucundan iceride; yeni node EKLENMEZ.
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0),
            (10, 100, 0, 0, 0), (0, 100, 0, 0, 0)]
     i, uzun, eklenen = G.baslangic_indeksi_belirle(pts)
     assert uzun is True
+    assert eklenen is None
+    assert pts[i][0] == 0                   # sol kenar
 
 
 if __name__ == "__main__":

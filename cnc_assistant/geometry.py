@@ -8,10 +8,17 @@ Bu modul saf-Python (ezdxf'e bagimli olmayan) geometri islemlerini icerir:
   * Node (vertex) sadelestirme  -> gereksiz, es-dogrultulu (collinear) ve
     sifir-uzunluklu noktalarin GEOMETRIYI BOZMADAN kaldirilmasi.
   * Baslangic (lead-in) noktasi hedefleme:
-        - Normal parcalar: ust kenarda, orta-ust ile sag-ust arasinda
-          (kose degil!) bir hedef -> kesim sonuna kadar destek korunur.
-        - Uzun-ince (serit) parcalar: her zaman SAG kenar -> serit kesilirken
-          her iki uctan da destekte kalir.
+        - Normal parcalar: UST kenarda, SOLDAN ~%20 konumunda (sol-ust bolge,
+          keskin kose degil) -> operatorun elle yaptigi "manuel optimize"
+          yerlesimini birebir taklit eder; kesim boyunca destek korunur.
+        - Uzun-ince (serit) parcalar:
+            * dikey serit -> SOL kenar, ucundan degil ~%25 iceride
+              (iki uctan da destekte kalir),
+            * yatay serit -> UST kenar (normal parca kurali).
+
+  Not: Baslangic hedefi eskiden SAG-UST idi; gercek uretim dosyalari
+  (ArtCAM'de elle optimize edilmis) incelendiginde operatorun tutarli olarak
+  SOL-UST bolgeyi sectigi olculdu ve algoritma buna gore duzeltildi.
 
 Noktalar `(x, y, start_width, end_width, bulge)` bicimindeki tuple listesi
 olarak temsil edilir (ezdxf LWPOLYLINE "xyseb" formatiyla birebir uyumlu).
@@ -31,23 +38,39 @@ UZUN_INCE_ORAN = 0.18
 # Kose-civari aday bolge yaricapi: bbox kosegeninin bu orani.
 KOSE_TOL_ORANI = 0.15
 
-# DESTEK YONU (lead-in/baslangic secimi icin en onemli parametre).
-# Kesim sirasi sol-alttan sag-uste ilerledigi icin, bir parca kesilirken
-# SAG-UST tarafi hala dolu (kesilmemis) malzemeyle desteklidir. Kapali bir
-# kontur baslangic noktasinda koptugundan, baslangici parcanin bu destek
-# yonundeki UC noktasina koyariz -> parca en sona kadar destekte kalir.
-# (dx, dy); varsayilan sag-ust (45 derece). Yatay agirlikli isterseniz
-# (1, 0.6) gibi, dikey agirlikli isterseniz (0.6, 1) verebilirsiniz.
-DESTEK_YONU = (1.0, 1.0)
+# BASLANGIC (lead-in) hedefi -- normal parcalar icin UST kenarda, SOLDAN bu
+# oranda bir nokta hedeflenir (0 = sol kose, 1 = sag kose). Uretim dosyalarinda
+# elle optimize edilmis yerlesimlerin medyani ~0.20 (sol-ust) cikti.
+BASLANGIC_X_ORANI = 0.20
 
-# Destek yonunde "en uc" sayilacak vertex bandi (bbox kosegeninin orani).
-# Bu bant icinde birden cok vertex varsa (duz bir sag-ust kenar), o kenarin
-# ORTASINDAKI vertex secilir (kose yerine, kenar boyunca destekli nokta).
+# "Ust" sayilacak vertex bandi: bbox yuksekliginin bu orani kadar ust kenardan
+# asagisi ust bolge kabul edilir. Bu bant icindeki adaylar arasindan yatayda
+# hedefe (BASLANGIC_X_ORANI) en yakin vertex secilir. Genis tutulur; boylece
+# ust kenari cukurlu/tabli karmasik parcalarda da sol-ust bolge yakalanir.
+UST_BANT_ORANI = 0.30
+
+# Ust banttaki adaylarda dusey sapmanin agirligi (yatay hedefe kiyasla).
+# Kucuk tutulur -> once dogru YATAY konum (sol), sonra mumkun oldugunca yukari.
+UST_Y_AGIRLIK = 0.10
+
+# Dikey serit parcalarda baslangicin uzun (yan) kenar boyunca konumu: alttan
+# bu oranda. Ucundan degil iceride -> serit kesilirken iki uctan da destekli.
+SERIT_Y_ORANI = 0.25
+
+# Baslangic hedefine (ust kenar, soldan BASLANGIC_X_ORANI) mevcut bir vertex
+# bu kadar yakinsa (bbox kosegeninin orani) o vertex kullanilir; degilse ust
+# kenar DUZ segmenti uzerine TAM hedefte bir baslangic node'u eklenir (ArtCAM'de
+# elle yapilan mid-edge baslangic yerlesiminin birebir karsiligi -> sekil
+# %100 korunur, yalnizca tek bir lead-in node'u eklenir).
+BASLANGIC_KABUL_TOL = 0.04
+
+# DESTEK/BASLANGIC YONU (dx, dy). Yalnizca YATAY isaret (dx) kullanilir:
+# dx<0 -> sol-ust (varsayilan), dx>0 -> sag-ust, dx~0 -> orta-ust. Dikey serit
+# parcalarda ayni isaret hangi yan kenarin secilecegini belirler.
+DESTEK_YONU = (-1.0, 1.0)
+
+# Yon-projeksiyonu primitifi (destek_ucu_indeks) icin "en uc" bandi.
 DESTEK_BANT_ORANI = 0.02
-
-# --- Geriye donuk uyumluluk (eski hedef-tabanli parametreler) ---
-BASLANGIC_X_ORANI = 0.75
-SERIT_Y_ORANI = 0.5
 
 # Node sadelestirmede "es-dogrultulu" kabul edilecek azami sapma (cizim
 # birimi). Bir nokta, komsulariyla olusturdugu dogruya bu mesafeden daha
@@ -166,15 +189,15 @@ def hedef_nokta(noktalar, uzun_ince,
                 serit_y_orani=SERIT_Y_ORANI):
     """Parcanin baslangic noktasinin idealde NEREDE olmasi gerektigini doner.
 
-      * uzun_ince (serit): sag kenar uzerinde, dikeyde `serit_y_orani`
-        konumunda (varsayilan sag-orta).  -> her iki uctan destek.
-      * normal: ust kenar uzerinde, yatayda `bas_x_orani` konumunda
-        (varsayilan orta-ust ile sag-ust arasi).  -> kose degil; kesim
+      * uzun_ince (dikey serit): SOL kenar uzerinde, dikeyde `serit_y_orani`
+        konumunda (varsayilan sol, alttan ~%25).  -> her iki uctan destek.
+      * normal: UST kenar uzerinde, yatayda `bas_x_orani` konumunda
+        (varsayilan soldan ~%20 = sol-ust bolge).  -> kose degil; kesim
         boyunca destek korunur.
     """
     xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(noktalar)
     if uzun_ince:
-        return (xmax, ymin + h * serit_y_orani)
+        return (xmin, ymin + h * serit_y_orani)
     return (xmin + w * bas_x_orani, ymax)
 
 
@@ -279,7 +302,7 @@ def tab_pozisyonlari(kontur, adet=4, kose_kacinma=0.12):
     return sonuc
 
 
-def destek_ucu_indeks(pts, d=DESTEK_YONU, band_orani=DESTEK_BANT_ORANI):
+def destek_ucu_indeks(pts, d=(1.0, 1.0), band_orani=DESTEK_BANT_ORANI):
     """Baslangic (lead-in / kopma) noktasi icin en SAG-UST (destek yonundeki)
     vertex'in indeksini DETERMINISTIK olarak secer.
 
@@ -315,17 +338,103 @@ def destek_ucu_indeks(pts, d=DESTEK_YONU, band_orani=DESTEK_BANT_ORANI):
     return adaylar[len(adaylar) // 2]
 
 
-def baslangic_indeksi_belirle(pts, **kw):
-    """Baslangic vertex indeksini destek yonundeki uca gore secer.
+def _baslangic_hedef(pts, **kw):
+    """Baslangicin idealde OLMASI gereken hedef noktayi ve aday bandi doner.
 
-    Doner: (indeks, uzun_ince, eklenecek)
-      indeks    : rotasyon yapilacak vertex indeksi (her zaman gecerli),
-      uzun_ince : parca serit mi (yalnizca bilgi/rapor icin),
-      eklenecek : None (destek-uc yontemi mevcut vertex kullanir; yeni node
-                  EKLENMEZ -> gereksiz node uretilmez).
-    """
+    Doner: (tx, ty, uzun_ince, band_idxler, serit_mi)
+      * Normal parca + yatay serit: hedef UST kenarda, soldan `frac_x`
+        (varsayilan %20 = sol-ust). Aday band = UST bant icindeki vertex'ler.
+      * Dikey serit: hedef destek tarafindaki yan kenarda, ucundan degil
+        `SERIT_Y_ORANI` kadar iceride (iki uctan da destekli).
+
+    Yatay hedef orani ve serit tarafi `destek_yonu`nun dx isaretinden turer:
+    dx<0 -> sol (varsayilan), dx>0 -> sag, dx~0 -> orta. Isterseniz dogrudan
+    `bas_x_orani` gecebilirsiniz."""
+    n = len(pts)
     xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
     uzun_ince = uzun_ince_mi(w, h)
+
     d = kw.get("destek_yonu", DESTEK_YONU)
-    i = destek_ucu_indeks(pts, d, kw.get("band_orani", DESTEK_BANT_ORANI))
+    dx = d[0] if d else -1.0
+    if "bas_x_orani" in kw:
+        frac_x = kw["bas_x_orani"]
+    elif dx < -0.05:
+        frac_x = BASLANGIC_X_ORANI            # sol-ust
+    elif dx > 0.05:
+        frac_x = 1.0 - BASLANGIC_X_ORANI      # sag-ust
+    else:
+        frac_x = 0.5                          # orta-ust
+    sol_taraf = dx <= 0.05
+    ust_band = kw.get("ust_bant_orani", UST_BANT_ORANI)
+    serit_y = kw.get("serit_y_orani", SERIT_Y_ORANI)
+
+    # Dikey serit: uzun kenar dusey -> baslangic destek tarafindaki yan kenarda.
+    if uzun_ince and h > w:
+        tx = xmin if sol_taraf else xmax
+        ty = ymin + serit_y * h
+        return tx, ty, uzun_ince, list(range(n)), True
+
+    # Normal parca + yatay serit: ust bantta, yatayda hedefe en yakin.
+    tx = xmin + frac_x * w
+    ty = ymax
+    if h > 1e-12:
+        band = [i for i in range(n) if (pts[i][1] - ymin) >= (1.0 - ust_band) * h]
+    else:
+        band = list(range(n))
+    if not band:
+        band = list(range(n))
+    return tx, ty, uzun_ince, band, False
+
+
+def baslangic_ucu_indeks(pts, **kw):
+    """Baslangic hedefine en yakin MEVCUT vertex'in indeksini secer (yeni node
+    EKLEMEZ). `baslangic_indeksi_belirle`nin vertex-yalniz cekirdegi; ayrica
+    dogrudan cagirilabilir. Bkz. `_baslangic_hedef`."""
+    n = len(pts)
+    if n == 0:
+        return 0
+    tx, ty, _uzun, band, serit = _baslangic_hedef(pts, **kw)
+    yw = 1.0 if serit else kw.get("ust_y_agirlik", UST_Y_AGIRLIK)
+    return min(band, key=lambda i: (pts[i][0] - tx) ** 2
+               + yw * (pts[i][1] - ty) ** 2)
+
+
+def baslangic_indeksi_belirle(pts, **kw):
+    """Baslangici sol-ust (elle-optimize) hedefine gore belirler.
+
+    Once hedefe (ust kenar, soldan `BASLANGIC_X_ORANI`) en yakin mevcut vertex
+    bulunur. Vertex hedefe yeterince yakinsa (`BASLANGIC_KABUL_TOL`) o kullanilir;
+    degilse ust kenarin DUZ segmenti uzerine TAM hedefte bir baslangic node'u
+    eklenir -> ArtCAM'de elle yapilan mid-edge yerlesimin karsiligi. Boylece
+    sade dikdortgen parcalarda bile baslangic sol-ust ~%20 noktaya oturur.
+    Node ekleme `nokta_ekle=False` ile kapatilabilir (yalnizca mevcut vertex).
+
+    Doner: (indeks, uzun_ince, eklenecek)
+      indeks==None ve eklenecek=(seg_idx, yeni_pt) ise cagiran node ekler;
+      aksi halde indeks gecerli bir vertex indeksidir, eklenecek=None.
+    """
+    n = len(pts)
+    xmin, ymin, xmax, ymax, w, h = bbox_ve_olcu(pts)
+    uzun_ince = uzun_ince_mi(w, h)
+    if n == 0:
+        return 0, uzun_ince, None
+
+    tx, ty, uzun_ince, band, serit = _baslangic_hedef(pts, **kw)
+    yw = 1.0 if serit else kw.get("ust_y_agirlik", UST_Y_AGIRLIK)
+    i = min(band, key=lambda k: (pts[k][0] - tx) ** 2 + yw * (pts[k][1] - ty) ** 2)
+
+    # Serit parcalarda ya da node ekleme kapaliysa mevcut vertex'i kullan.
+    if serit or not kw.get("nokta_ekle", True):
+        return i, uzun_ince, None
+
+    diag = math.hypot(w, h) or 1.0
+    dist = math.hypot(pts[i][0] - tx, pts[i][1] - ty)
+    tol = kw.get("kabul_tol_orani", BASLANGIC_KABUL_TOL) * diag
+    if dist <= tol:
+        return i, uzun_ince, None
+
+    # Hedefte mevcut vertex yok -> ust kenar DUZ segmentine tam hedefte ekle.
+    eklenen = en_uygun_duz_segment_ekleme_noktasi(pts, (tx, ty))
+    if eklenen is not None:
+        return None, uzun_ince, eklenen
     return i, uzun_ince, None

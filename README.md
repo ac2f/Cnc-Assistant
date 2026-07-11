@@ -90,27 +90,35 @@ python main.py examples/ornek_kesim.tap -e
 
 ## Ne yapar? (detay)
 
-### 1) Baslangic noktasi optimizasyonu (DXF) — DESTEK-UC yontemi
+### 1) Baslangic noktasi optimizasyonu (DXF) — SOL-UST HEDEF yontemi
 
-Kesim sirasi sol-alttan sag-uste ilerledigi icin, bir parca kesilirken onun
-**sag-ust tarafi hala dolu (kesilmemis) malzemeyle desteklidir.** Kapali bir
-kontur, kesim bittiginde **baslangic noktasinda** koptugundan (dongu orada
-kapanir), baslangici parcanin **destek yonundeki (sag-ust) UC noktasina**
-koyariz. Boylece parca en sona kadar destekli kalir, **asla desteksiz kalmaz.**
+Baslangici parcanin **UST kenarina, soldan ~%20** (sol-ust bolge) tasiriz.
+Bu, operatorun ArtCAM'de **elle** yaptigi "manuel optimize" yerlesiminin
+birebir karsiligidir: baslangic ust kenarda, keskin kose degil, kesim boyunca
+destegi korunan bir noktaya oturur.
 
-Secim **deterministiktir** (tolerans/kose-yakinligi tahmini yok): her vertex'in
-destek yonune izdusumu hesaplanir, en yuksek olan (uc) secilir. Duz bir sag-ust
-kenar varsa o kenarin ORTASI secilir (kose yerine, arkasi tumuyle dolu bir
-nokta). Bu sayede **4 vertex'li kucuk parcada da, 900+ vertex'li karmasik/ic
-bukey parcada da** ayni guvenle calisir; yeni node **eklemez**.
+Yontem (yon-projeksiyonu degil, **hedef-nokta yakinligi**): ust bant icindeki
+(bbox yuksekliginin ~%30'u kadar ust) vertex'ler arasindan yatayda hedefe en
+yakin olan secilir. Hedefe yeterince yakin **mevcut** bir vertex varsa o
+kullanilir (yeni node yok); yoksa ust kenarin **duz segmenti uzerine TAM
+hedefte** tek bir lead-in node'u eklenir (ArtCAM'in yaptigi gibi). Boylece sade
+dikdortgen parcalarda bile baslangic sol-ust ~%20 noktaya oturur; **sekil (bbox
++ toplam cevre) %100 korunur.** `--destek-yonu ...` ile bant/hedef degistirilse
+de **4 vertex'li kucuk parcada da, 900+ vertex'li karmasik parcada da** ayni
+guvenle calisir.
 
-Destek yonu `--destek-yonu` ile ayarlanir: **`sag-ust`** (varsayilan, onerilen),
-`ust` (ust agirlikli) veya `sag` (sag agirlikli). Uzun-ince seritler ve cemberler
-de ayni kural ile dogal olarak sag-ust ucundan baslar.
+Uzun-ince **dikey seritler** sol yan kenarda (ucundan ~%25 iceride, iki uctan
+destekli) baslar; **yatay seritler** ve cemberler ust kenar (sol-ust) kuralini
+izler. Node ekleme `nokta_ekle=False` ile kapatilabilir (yalnizca mevcut vertex).
 
-> Gercek bir ArtCAM nesting dosyasinda (1500×3000, 297 parca) test edildi:
-> parcalarin **%99'u** dogru sag-ust ucta konumlandi (onceki surumde ~%11),
-> bbox + toplam cevre birebir korundu, ~103.000 gereksiz node temizlendi.
+Hedef `--destek-yonu` ile ayarlanir: **`sol-ust`** (varsayilan, onerilen —
+elle-optimize dosyasina en yakin), `ust` (orta-ust) veya `sag-ust`.
+
+> Gercek bir ArtCAM nesting dosyasinda (1500×3000, 262 parca) test edildi:
+> algoritma ciktisi, operatorun **elle optimize** ettigi dosyaya, operatorun
+> yerini fiilen degistirdigi parcalarin **~%71'inde** birebir (normalize mesafe
+> < 0.12) oturdu; ortalama sapma sol-ust hedefte 0.14, eski sag-ust surumde
+> 0.77 idi. bbox + toplam cevre birebir korundu.
 
 ### 2) Gereksiz node temizligi
 
@@ -213,9 +221,9 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   tam-siki 1e-6 ile dogrulanir).
 
 **v1.4 yenilikleri:**
-- **Destek-uc baslangic algoritmasi** (yukaridaki "1) Baslangic noktasi"):
-  deterministik, karmasik/kucuk parcalarda kusursuz, parca asla desteksiz
-  kalmaz. Arayuzde **destek yonu** secici (Sag-ust / Ust / Sag).
+- **Sol-ust hedef baslangic algoritmasi** (yukaridaki "1) Baslangic noktasi"):
+  deterministik, karmasik/kucuk parcalarda kusursuz, elle-optimize yerlesimine
+  en yakin. Arayuzde **destek yonu** secici (Sol-ust / Orta-ust / Sag-ust).
 - **Node temizligi O(n)** yigin-tabanli algoritmaya gecti — 100.000+ node'lu
   buyuk nesting dosyalari saniyeler icinde islenir.
 
@@ -335,7 +343,7 @@ Genel / arayuz:
 DXF secenekleri:
   --alan-orani        Risk esigi: parca alani / tabaka alani         (0.10)
   --boyut-orani       Risk esigi: parca eni-boyu / tabaka eni-boyu   (0.50)
-  --destek-yonu       Baslangic (kopma) destek yonu: sag-ust|ust|sag (sag-ust)
+  --destek-yonu       Baslangic (kopma) hedef bolgesi: sol-ust|ust|sag-ust (sol-ust)
   --node-tol          Node sadelestirme toleransi                    (1e-06)
   --node-temizleme-yok  Gereksiz node temizligini kapat
   --onizleme-yok      DXF icin PNG uretme
