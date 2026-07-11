@@ -18,9 +18,30 @@ def _matplotlib():
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        # Kullanicinin ortaminda koyu (dark) bir stil/matplotlibrc tanimli olsa
+        # bile ciktilarin arka plani her zaman BEYAZ olsun -> indirilen PDF'te
+        # silinmesi gereken siyah arka plan olusmaz.
+        plt.style.use("default")
+        plt.rcParams.update({
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "savefig.edgecolor": "white",
+            "savefig.transparent": False,
+        })
         return plt
     except ImportError:
         return None
+
+
+def _kaydet(fig, yol, dpi=140):
+    """Figuru BEYAZ arka planla kaydeder (PDF/PNG). Arka plan asla siyah/seffaf
+    gelmez -> CAD'e/aktarima uygun temiz cikti."""
+    fig.patch.set_facecolor("white")
+    for ax in fig.get_axes():
+        ax.set_facecolor("white")
+    fig.savefig(yol, dpi=dpi, facecolor="white", edgecolor="white",
+                transparent=False)
 
 
 def _komut_flatten(d, seg=18):
@@ -125,7 +146,7 @@ def baslangic_oncesi_sonrasi(oncesi_varliklar, sonrasi_varliklar,
     fig.suptitle("Baslangic Noktasi Optimizasyonu (kontrol amaclidir)",
                  fontsize=13)
     fig.tight_layout()
-    fig.savefig(png_yol, dpi=140)
+    _kaydet(fig, png_yol)
     plt.close(fig)
     print(f"[Onizleme] Oncesi/Sonrasi gorseli: {png_yol}")
     return True
@@ -141,7 +162,7 @@ def vektor_pdf(varliklar, yol, baslik="Nesting", vurgu_handlelar=None):
     _kontur_ciz(ax, varliklar, vurgu_handlelar or set(), baslangic_etiketi=False)
     ax.set_title(baslik)
     fig.tight_layout()
-    fig.savefig(yol, dpi=140)
+    _kaydet(fig, yol)
     plt.close(fig)
     return True
 
@@ -187,6 +208,6 @@ def gcode_sira_onizleme(ozet, png_yol, baslik="G-Code Kesim Sirasi"):
     ax.grid(True, alpha=0.25)
     ax.set_title(baslik)
     fig.tight_layout()
-    fig.savefig(png_yol, dpi=140)
+    _kaydet(fig, png_yol)
     plt.close(fig)
     return True
