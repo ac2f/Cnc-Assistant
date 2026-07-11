@@ -179,6 +179,17 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
+**v1.7 yenilikleri:**
+- **Gercek NFP + Genetik nesting motoru** (`nesting_nfp.py`, pyclipper): No-Fit
+  Polygon (Minkowski) geometrisi ile parca-parca cakisma, Inner-Fit ile
+  konteyner icinde tutma, ve **genetik algoritma** (order-crossover + mutasyon
+  + elitizm) ile sira/rotasyon optimizasyonu. Genelde raster'dan **daha iyi
+  doluluk**. Nesting panelinde **Motor** secici (Raster (hizli) / NFP+Genetik
+  (kaliteli)) + GA populasyon/nesil ayarlari. pyclipper yoksa otomatik raster'a
+  doner.
+- **Web gezgininde klasor islemleri:** "+ Klasor" ile olusturma, her klasorde
+  ✎ yeniden adlandirma ve 🗑 silme (yol-gezme engelli, ev/kok korumali).
+
 **v1.6 yenilikleri:**
 - **Vektorel PDF disari aktarma:** DXF onizlemesinde "PDF (vektorel)" butonu
   ONCESI+SONRASI panellerini gercek bezier egrileriyle tek PDF olarak indirir

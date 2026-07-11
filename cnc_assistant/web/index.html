@@ -31,6 +31,7 @@
     <div class="kenar-baslik">
       <span>Dosyalar</span>
       <div class="kisayol">
+        <button class="mini" id="yeniKlasorBtn" title="Bu dizinde yeni klasor">+ Klasor</button>
         <button class="mini" data-git="ev" title="Ev dizini">Ev</button>
         <button class="mini" data-git="cwd" title="Calisma dizini">Proje</button>
       </div>
@@ -131,6 +132,13 @@
       <div class="kart">
         <h3>3 · Nesting Ayarlari
           <span class="ipuc-nokta" onclick="nestYardim()" title="Aciklama">?</span></h3>
+        <div class="grup" style="margin-bottom:10px">
+          <label>Motor (yerlestirme yontemi)</label>
+          <div class="segment" id="nMotor">
+            <button data-motor="raster" class="aktif">Raster (hizli)</button>
+            <button data-motor="nfp">NFP + Genetik (kaliteli)</button>
+          </div>
+        </div>
         <div class="nest-ayar">
           <div class="grup"><label>Bicak payi / kerf (mm)</label>
             <input type="number" class="alan" id="nKerf" value="6" step="0.5"></div>
@@ -148,13 +156,17 @@
               <option value="45">45° adim</option>
               <option value="15">15° adim (yavas)</option>
             </select></div>
-          <div class="grup"><label>Doluluk / kalite</label>
+          <div class="grup" data-motor-goster="raster"><label>Doluluk / kalite</label>
             <select class="alan" id="nKalite">
               <option value="1">Hizli</option>
               <option value="2" selected>Dengeli</option>
               <option value="3">Yuksek</option>
               <option value="4">Maksimum (yavas)</option>
             </select></div>
+          <div class="grup gizli" data-motor-goster="nfp"><label>GA populasyon</label>
+            <input type="number" class="alan" id="nPop" value="12" min="4" step="2"></div>
+          <div class="grup gizli" data-motor-goster="nfp"><label>GA nesil</label>
+            <input type="number" class="alan" id="nNesil" value="8" min="1" step="1"></div>
         </div>
         <button class="dugme genis" style="margin-top:12px" onclick="nestCalistir()">Yerlestir</button>
       </div>
@@ -191,9 +203,13 @@
         hassas ama daha yavas; buyuk deger = hizli ama kaba. 1–3 mm tipiktir.</p>
       <p><b>Rotasyon:</b> Parcanin denenecek donme acilari. Daha cok aci =
         genelde daha iyi doluluk ama daha yavas.</p>
-      <p><b>Doluluk / kalite:</b> Farkli yerlestirme siralarini deneyip EN DOLU
-        sonucu secer. Hizli=tek deneme; Maksimum=cok deneme (daha iyi doluluk
-        ama daha yavas). Sonuc asla daha kotu olmaz.</p>
+      <p><b>Motor:</b> <b>Raster</b> = izgara tabanli, hizli, saglam (her sekil).
+        <b>NFP + Genetik</b> = gercek No-Fit-Polygon geometrisi + genetik
+        optimizasyon; genelde DAHA IYI DOLULUK, biraz daha yavas.</p>
+      <p><b>Doluluk / kalite (Raster):</b> Farkli yerlestirme siralarini deneyip
+        EN DOLU sonucu secer. Hizli=tek deneme; Maksimum=cok deneme.</p>
+      <p><b>GA populasyon / nesil (NFP):</b> Genetik aramada birey sayisi ve
+        nesil sayisi. Buyuk degerler = daha iyi doluluk ama daha yavas.</p>
       <p><b>Tabakalar:</b> Birden fazla eklenebilir; her biri sabit dikdortgen/
         daire ya da bir DXF'ten alinan HERHANGI bir sekil olabilir. Parcalar
         sirayla once ilk tabakaya, sigmayan sonrakine yerlesir.</p>

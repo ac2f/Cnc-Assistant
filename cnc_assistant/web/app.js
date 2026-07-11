@@ -97,6 +97,13 @@ function gezginCiz(s, filtre) {
   s.klasorler.filter(k => uyar(k.ad)).sort(cmp).forEach(k => {
     const sinif = "klasor" + (k.yol === sonZ ? " son-ziyaret" : "");
     const e = oge(IK_KLASOR, k.ad, sayimRozet(k), sinif);
+    // yeniden adlandir / sil eylemleri
+    const islem = document.createElement("span"); islem.className = "islem";
+    islem.innerHTML = `<button title="Yeniden adlandir">✎</button>
+      <button class="sil" title="Sil">🗑</button>`;
+    islem.children[0].onclick = ev => { ev.stopPropagation(); klasorYenidenAdlandir(k); };
+    islem.children[1].onclick = ev => { ev.stopPropagation(); klasorSil(k); };
+    e.appendChild(islem);
     e.onclick = () => gozat(k.yol);
     g.appendChild(e);
   });
@@ -131,8 +138,33 @@ function oge(ik, isim, sag, sinif) {
   d.innerHTML = ik + `<span class="isim">${isim}</span>` + (sag || "");
   return d;
 }
-document.querySelectorAll(".mini").forEach(b => b.onclick = () =>
+document.querySelectorAll(".mini[data-git]").forEach(b => b.onclick = () =>
   gozat(b.dataset.git === "ev" ? GZ.ev : GZ.cwd));
+
+// --- klasor islemleri ---
+$("yeniKlasorBtn").onclick = async () => {
+  const ad = prompt("Yeni klasor adi:", "yeni_klasor");
+  if (!ad) return;
+  const r = await api("/api/klasor/olustur", { yol: GZ.yol, ad });
+  if (r.hata) { bildir(r.hata, true); return; }
+  bildir("Klasor olusturuldu"); gozat(GZ.yol);
+};
+async function klasorYenidenAdlandir(k) {
+  const yeni = prompt("Yeni ad:", k.ad);
+  if (!yeni || yeni === k.ad) return;
+  const r = await api("/api/yeniden_adlandir", { yol: k.yol, yeni_ad: yeni });
+  if (r.hata) { bildir(r.hata, true); return; }
+  bildir("Yeniden adlandirildi"); gozat(GZ.yol);
+}
+async function klasorSil(k) {
+  const say = (k.dxf || 0) + (k.gcode || 0);
+  const msg = say ? `"${k.ad}" ve icindeki ${say}+ dosya SILINSIN mi? Geri alinamaz!`
+                  : `"${k.ad}" klasoru silinsin mi?`;
+  if (!confirm(msg)) return;
+  const r = await api("/api/klasor/sil", { yol: k.yol });
+  if (r.hata) { bildir(r.hata, true); return; }
+  bildir("Silindi"); gozat(GZ.yol);
+}
 $("tumDxfBtn").onclick = async () => {
   const s = await api("/api/gozat", { yol: GZ.yol });
   (s.dosyalar || []).filter(f => f.tur === "dxf").forEach(dosyaAc);
@@ -765,6 +797,16 @@ let NEST = { parcalar: [], tabakalar: [], sonuc: null, aktif: 0 };
 
 $("nestBtn").onclick = () => { $("nestPanel").classList.remove("gizli");
   nestParcaCiz(); nestTabakaCiz(); };
+
+// motor secici (raster / nfp) — ilgili ayar gruplarini goster/gizle
+let NEST_MOTOR = "raster";
+document.querySelectorAll("#nMotor button").forEach(b => b.onclick = () => {
+  NEST_MOTOR = b.dataset.motor;
+  document.querySelectorAll("#nMotor button").forEach(x =>
+    x.classList.toggle("aktif", x === b));
+  document.querySelectorAll("[data-motor-goster]").forEach(g =>
+    g.classList.toggle("gizli", g.dataset.motorGoster !== NEST_MOTOR));
+});
 function nestKapat(){ $("nestPanel").classList.add("gizli"); }
 function nestYardim(){ $("nestYardimPerde").classList.remove("gizli"); }
 function nestYardimKapat(){ $("nestYardimPerde").classList.add("gizli"); }
@@ -860,7 +902,8 @@ async function nestCalistir(){
   else rotasyonlar=rot.split(",").map(Number);
   const ayar={ kerf:+$("nKerf").value, bosluk:+$("nBosluk").value,
     kenar:+$("nKenar").value, cozunurluk:+$("nCoz").value, rotasyonlar,
-    optimizasyon:+$("nKalite").value };
+    motor:NEST_MOTOR, optimizasyon:+$("nKalite").value,
+    populasyon:+$("nPop").value, nesil:+$("nNesil").value };
   $("nestDurum").innerHTML=`<span class="yukleniyor"></span> Yerlestiriliyor…`;
   const r=await api("/api/nest/calistir",{parcalar:NEST.parcalar,
     tabakalar:NEST.tabakalar.map(t=>({poly:t.poly})), ayar});
@@ -869,8 +912,10 @@ async function nestCalistir(){
   nestSekmeCiz(); nestCiz();
   const ym=(r.yerlesmeyen||[]).reduce((a,b)=>a+b.adet,0);
   $("nestDurum").innerHTML=`<span class="ok">Yerlesti:</span> ${r.yerlesim.length} parca · `+
+    `${NEST_MOTOR==="nfp"?"NFP+Genetik":"Raster"} · `+
     `doluluk: ${r.doluluk.map((d,i)=>`T${i+1} %${d}`).join(" · ")}`+
-    (ym?` · <span class="uyari">${ym} parca sigmadi</span>`:"");
+    (ym?` · <span class="uyari">${ym} parca sigmadi</span>`:"")+
+    (r.uyari?`<br><span class="uyari">${r.uyari}</span>`:"");
 }
 function nestSekmeCiz(){
   const k=$("nestTabSekme"); k.innerHTML="";

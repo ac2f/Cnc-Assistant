@@ -35,6 +35,7 @@ from . import dxf_processor as D
 from . import gcode as GC
 from . import geometry as GEO
 from . import nesting as NEST
+from . import nesting_nfp as NEST_NFP
 from . import preview as PV
 from . import project as P
 
@@ -205,6 +206,61 @@ def api_gozat(veri):
 
 
 _DESTEK_YONU = {"sag-ust": (1.0, 1.0), "ust": (0.35, 1.0), "sag": (1.0, 0.35)}
+
+
+def _guvenli_ad(ad):
+    """Yol gezme (path traversal) engelle: sadece dosya/klasor adi."""
+    return os.path.basename(str(ad)).strip()
+
+
+def api_klasor_olustur(veri):
+    ust = os.path.abspath(veri.get("yol") or os.getcwd())
+    ad = _guvenli_ad(veri.get("ad", ""))
+    if not ad:
+        return {"hata": "Gecerli bir klasor adi girin."}
+    if not os.path.isdir(ust):
+        return {"hata": f"Ust klasor yok: {ust}"}
+    hedef = os.path.join(ust, ad)
+    if os.path.exists(hedef):
+        return {"hata": "Bu isimde bir oge zaten var."}
+    try:
+        os.makedirs(hedef)
+    except Exception as e:      # noqa: BLE001
+        return {"hata": str(e)}
+    return {"yol": hedef}
+
+
+def api_klasor_sil(veri):
+    import shutil
+    yol = os.path.abspath(veri.get("yol", ""))
+    korumali = {"/", os.path.abspath(os.path.expanduser("~")),
+                os.path.abspath(os.getcwd())}
+    if yol in korumali or os.path.dirname(yol) == yol:
+        return {"hata": "Bu klasor silinemez (korumali)."}
+    if not os.path.isdir(yol):
+        return {"hata": "Klasor yok."}
+    try:
+        shutil.rmtree(yol)
+    except Exception as e:      # noqa: BLE001
+        return {"hata": str(e)}
+    return {"ust": os.path.dirname(yol)}
+
+
+def api_yeniden_adlandir(veri):
+    yol = os.path.abspath(veri.get("yol", ""))
+    yeni = _guvenli_ad(veri.get("yeni_ad", ""))
+    if not os.path.exists(yol):
+        return {"hata": "Oge yok."}
+    if not yeni:
+        return {"hata": "Gecerli bir ad girin."}
+    hedef = os.path.join(os.path.dirname(yol), yeni)
+    if os.path.exists(hedef):
+        return {"hata": "Bu isimde bir oge zaten var."}
+    try:
+        os.rename(yol, hedef)
+    except Exception as e:      # noqa: BLE001
+        return {"hata": str(e)}
+    return {"yol": hedef}
 
 
 def _dxf_opts(veri):
@@ -410,7 +466,15 @@ def api_nest_calistir(veri):
     tabakalar = veri.get("tabakalar") or []
     if not parcalar or not tabakalar:
         return {"hata": "En az bir parca ve bir tabaka gerekli."}
-    return NEST.raster_nest(parcalar, tabakalar, veri.get("ayar", {}))
+    ayar = veri.get("ayar", {})
+    if ayar.get("motor") == "nfp":
+        r = NEST_NFP.nfp_nest(parcalar, tabakalar, ayar)
+        if r is None:
+            r = NEST.raster_nest(parcalar, tabakalar, ayar)
+            r["uyari"] = ("pyclipper kurulu degil; hizli (raster) motor "
+                          "kullanildi. NFP icin: pip install pyclipper")
+        return r
+    return NEST.raster_nest(parcalar, tabakalar, ayar)
 
 
 def _poly_to_lw(msp, poly, layer, dx=0.0, dy=0.0):
@@ -490,6 +554,9 @@ def api_proje_klasor(veri):
 API = {
     "/api/scan": api_scan,
     "/api/gozat": api_gozat,
+    "/api/klasor/olustur": api_klasor_olustur,
+    "/api/klasor/sil": api_klasor_sil,
+    "/api/yeniden_adlandir": api_yeniden_adlandir,
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
     "/api/dxf/pdf": api_dxf_pdf,
