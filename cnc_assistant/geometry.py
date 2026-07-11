@@ -49,18 +49,18 @@ BASLANGIC_X_ORANI = 0.22
 BASLANGIC_KOSE_PAYI = 0.05
 
 # Ust bant kalinligi (bbox yuksekliginin orani): parcanin y >= ymax - bu*bant
-# olan bolgeleri "en ust" sayilir. KUCUK tutulur (~%8) -> baslangic her zaman
-# gercek tepeye cok yakin oturur; parcanin gobegine/egimine asla dusmez.
-UST_BANT_ORANI = 0.08
+# olan bolgeleri "en ust" sayilir. Kucuk tutulur -> baslangic her zaman gercek
+# tepeye yakin oturur; parcanin gobegine/egimine asla dusmez.
+UST_BANT_ORANI = 0.12
 
 # Ust bolge (kose) aday esigi: bir ust bolge, bbox eninin bu orani kadar
 # genisse "kayda deger" sayilir (kucuk sivri tepeler yerine gercek ust kenar
 # tercih edilir). Tek bolge varsa yine o kullanilir.
 MIN_KOSE_ORANI = 0.06
 
-# Dikey ince serit parcalarda baslangic: SAG kenar (sag zarf) uzerinde, alttan
-# bu oranda -> sag-orta ile sag-alt arasi (serit kesilirken destekli kalir).
-SERIT_Y_ORANI = 0.35
+# Dikey ince serit parcalarda baslangic: destek tarafi (varsayilan SOL) kenar
+# uzerinde, alttan bu oranda -> serit kesilirken iki uctan da destekli kalir.
+SERIT_Y_ORANI = 0.25
 
 # Dikey serit / "I" esigi: parca boyunca AZAMI yatay kalinlik / yukseklik bu
 # degerin altindaysa parca "serit" sayilir (bbox oranindan bagimsiz -> serifli
@@ -73,8 +73,8 @@ SERIT_KALINLIK_ORANI = 0.24
 UST_GENIS_TOLERANS = 0.70
 
 # Cok uzun (kirmizi-onizleme/riskli) YATAY serit parcalarda baslangicin ust
-# kontur uzerindeki yatay konumu (soldan): ust-orta ile sag-ust arasi.
-YATAY_SERIT_X_ORANI = 0.78
+# kontur uzerindeki yatay konumu (soldan): sag-uste yakin (elle-optimize ~0.89).
+YATAY_SERIT_X_ORANI = 0.88
 
 # Baslangic hedefine mevcut bir vertex bu kadar yakinsa (bbox kosegeninin orani)
 # o vertex kullanilir; degilse ust kontur DUZ segmenti uzerine TAM hedefte tek
@@ -615,10 +615,12 @@ def _baslangic_hedef_nokta(pts, **kw):
                            kw.get("serit_kalinlik_orani", SERIT_KALINLIK_ORANI))
     if serit:
         ty = ymin + serit_y * h
-        r = sag_kontur_x(pts, ty)
-        if r is not None:
-            return r[0], ty, r[1], r[2], True
-        return xmax, ty, None, False, True
+        # Destek tarafi (varsayilan SOL): dx<=0 -> sol kontur, dx>0 -> sag.
+        if dx > 0.05:
+            r = sag_kontur_x(pts, ty)
+            return (r[0], ty, r[1], r[2], True) if r else (xmax, ty, None, False, True)
+        r = sol_kontur_x(pts, ty)
+        return (r[0], ty, r[1], r[2], True) if r else (xmin, ty, None, False, True)
 
     # 2) Gercek ust bolgeler (ust bant kosulari).
     band = kw.get("ust_bant_orani", UST_BANT_ORANI)
@@ -649,16 +651,14 @@ def _baslangic_hedef_nokta(pts, **kw):
             frac = 0.5
         else:
             frac = BASLANGIC_X_ORANI
-        # Aday bolge: EN GENIS (en destekli) ust bolge -> sivri tepe yerine duz
-        # kenar. Birden cok bolge esit genislikteyse (tolerans icinde) destek
-        # yonundekini (sol/sag) sec.
+        # Aday bolge: yeterince genis (kayda deger) ust bolgeler arasindan
+        # destek yonundeki UC bolge -> varsayilan SOL (elle-optimize dosyasi
+        # bu yonde). dx>0 ise en sagdaki. Kucuk sivri tepeler (min_kose altinda)
+        # elenir, boylece gercek ust kenar tercih edilir.
         min_run = kw.get("min_kose_orani", MIN_KOSE_ORANI) * w
         genis = [r for r in kosular if (r[1] - r[0]) >= min_run] or kosular
-        maxw = max(b0 - a0 for a0, b0 in genis)
-        tol = kw.get("ust_genis_tolerans", UST_GENIS_TOLERANS)
-        adaylar = [r for r in genis if (r[1] - r[0]) >= tol * maxw]
-        a, b = (max(adaylar, key=lambda ab: ab[1]) if dx > 0.05
-                else min(adaylar, key=lambda ab: ab[0]))
+        a, b = (max(genis, key=lambda ab: ab[1]) if dx > 0.05
+                else min(genis, key=lambda ab: ab[0]))
         iw = b - a
         kose_payi = min(kw.get("kose_payi_orani", BASLANGIC_KOSE_PAYI) * w, 0.4 * iw)
         tx = a + frac * iw

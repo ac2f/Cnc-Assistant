@@ -169,15 +169,20 @@ def test_baslangic_sag_ust_secenegi():
     assert abs(bx - 6.24) < 1e-6          # bolgenin solundan %78 (sag-ust)
 
 
-def test_baslangic_dikey_serit_sag_kenarda():
-    # Dikey ince serit: baslangic SAG kenarda, alttan ~%35 (sag-orta/sag-alt).
+def test_baslangic_dikey_serit_destek_kenarinda():
+    # Dikey ince serit: baslangic destek tarafi (varsayilan SOL) kenarda,
+    # alttan ~%25 (elle-optimize dosyasi bu yonde).
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0),
            (10, 100, 0, 0, 0), (0, 100, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert uzun is True
-    assert abs(bx - 10) < 1e-6             # sag kenar
-    assert 20 < by < 55                     # sag-orta ile sag-alt arasi
+    assert abs(bx - 0) < 1e-6             # sol kenar (destek tarafi)
+    assert 10 < by < 45                    # alttan ~%25
+    # Saga bakan destek istenirse sag kenar
+    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
+    bx2, _by = _efektif_baslangic(pts, i2, e2)
+    assert abs(bx2 - 10) < 1e-6           # sag kenar
 
 
 def test_baslangic_uzun_yatay_serit_orta_sag():
