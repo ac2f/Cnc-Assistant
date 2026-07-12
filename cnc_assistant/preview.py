@@ -19,29 +19,46 @@ def _matplotlib():
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         # Kullanicinin ortaminda koyu (dark) bir stil/matplotlibrc tanimli olsa
-        # bile ciktilarin arka plani her zaman BEYAZ olsun -> indirilen PDF'te
-        # silinmesi gereken siyah arka plan olusmaz.
+        # bile cikti nötr kalsin: varsayilan stil + hicbir dolgu dikdortgeni
+        # gomulmesin (arka plan SEFFAF kaydedilir, bkz. _kaydet).
         plt.style.use("default")
         plt.rcParams.update({
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "savefig.facecolor": "white",
-            "savefig.edgecolor": "white",
-            "savefig.transparent": False,
+            "figure.facecolor": "none",
+            "axes.facecolor": "none",
+            "savefig.facecolor": "none",
+            "savefig.edgecolor": "none",
+            "savefig.transparent": True,
+            # PDF/PS'te yazilari GERCEK gomulu TrueType (Type42) olarak yaz ->
+            # Corel/CAD'de "font sec" sorusu cikmaz, yazi convertsiz kalmaz.
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+            # SVG'de yazilari düz metin degil YOL (path/egri) olarak goml.
+            "svg.fonttype": "path",
         })
         return plt
     except ImportError:
         return None
 
 
+def _eksen_sadelestir(ax):
+    """Eksen cercevesini/tik/etiketlerini gizler -> disari aktarilan vektorde
+    (Corel/CAD) silinmesi gereken fazladan cizgi/dikdortgen objesi kalmaz.
+    Yalnizca parca konturlari, baslangic isaretleri (ve varsa izgara) kalir."""
+    ax.set_facecolor("none")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.tick_params(left=False, right=False, top=False, bottom=False,
+                   labelleft=False, labelbottom=False)
+
+
 def _kaydet(fig, yol, dpi=140):
-    """Figuru BEYAZ arka planla kaydeder (PDF/PNG). Arka plan asla siyah/seffaf
-    gelmez -> CAD'e/aktarima uygun temiz cikti."""
-    fig.patch.set_facecolor("white")
+    """Figuru SEFFAF arka planla kaydeder (PDF/PNG/SVG). Arka plana dolgu
+    dikdortgeni (beyaz/siyah) gomulmez -> Corel/CAD'e aktarimda silinecek
+    arka plan sekli olmaz; yazilar da gomulu/egri olur (font sorusu cikmaz)."""
+    fig.patch.set_alpha(0.0)
     for ax in fig.get_axes():
-        ax.set_facecolor("white")
-    fig.savefig(yol, dpi=dpi, facecolor="white", edgecolor="white",
-                transparent=False)
+        ax.patch.set_alpha(0.0)
+    fig.savefig(yol, dpi=dpi, transparent=True)
 
 
 def _komut_flatten(d, seg=18):
@@ -172,6 +189,7 @@ def _kontur_ciz(ax, varliklar, riskli_handlelar, stil,
         ax.set_ylim(min(ys) - pad, max(ys) + pad)
     ax.set_aspect("equal")
     ax.grid(bool(stil["izgara"]), alpha=0.25)
+    _eksen_sadelestir(ax)
 
 
 def onizleme_uret(oncesi_varliklar, sonrasi_varliklar, riskli_handlelar,
