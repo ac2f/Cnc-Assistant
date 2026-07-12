@@ -39,7 +39,6 @@ def dxf_opts(args):
         "node_temizle": not args.node_temizleme_yok,
         "node_tol": args.node_tol,
         "destek_yonu": _DESTEK_YONU.get(args.destek_yonu, (-1.0, 1.0)),
-        "referans_dxf": getattr(args, "referans_dxf", None),
     }
 
 
@@ -99,10 +98,6 @@ def kurulum_parser():
                             "kenarda secilen tarafa yakin bir vertex'e tasinir.")
     g_dxf.add_argument("--node-tol", type=float, default=G.NODE_TOL,
                        help="Node sadelestirme tolerasi (cizim birimi)")
-    g_dxf.add_argument("--referans-dxf", default=None,
-                       help="Elle-duzeltilmis baslangiclari iceren referans DXF "
-                            "(SPLINE/POLYLINE). Eslesen parcalarin baslangici "
-                            "referanstaki noktaya tasinir; ayna/otele otomatik.")
     g_dxf.add_argument("--node-temizleme-yok", action="store_true",
                        help="Gereksiz node temizligini kapat")
     g_dxf.add_argument("--onizleme-yok", action="store_true",

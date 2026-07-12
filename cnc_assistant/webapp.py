@@ -269,7 +269,6 @@ def _dxf_opts(veri):
         "node_tol": float(veri.get("node_tol", 1e-6)),
         "destek_yonu": _DESTEK_YONU.get(veri.get("destek_yonu", "sol-ust"),
                                         (-1.0, 1.0)),
-        "referans_dxf": veri.get("referans_dxf") or None,
     }
 
 

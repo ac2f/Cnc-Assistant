@@ -187,16 +187,6 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
-**v1.8 yenilikleri:**
-- **Referans (elle-duzeltilmis) baslangic:** Karmasik/serpme parcalarda
-  baslangicin nereye konacagi tek bir geometrik kurala sigmayan gercek CNC
-  yargisi gerektirir. Bu parcalari elle duzeltip (baslangic istenen yere
-  alinmis) bir **referans DXF** verirsiniz; algoritma referanstaki her parcayi
-  hedef dosyadaki AYNI parca ile (boyut + konum; **ayna/otele donusum otomatik**)
-  eslestirip baslangici oraya tasir. Sekil %100 korunur; secim kalici/tekrar
-  kullanilabilir olur. CLI: `--referans-dxf`; web: DXF sekmesinde "Referans DXF"
-  alani. SPLINE / LWPOLYLINE / POLYLINE desteklenir.
-
 **v1.7 yenilikleri:**
 - **Gercek NFP + Genetik nesting motoru** (`nesting_nfp.py`, pyclipper): No-Fit
   Polygon (Minkowski) geometrisi ile parca-parca cakisma, Inner-Fit ile
