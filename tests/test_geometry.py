@@ -115,23 +115,28 @@ def _efektif_baslangic(pts, i, ekle):
     return (pts[i][0], pts[i][1])
 
 
-def test_baslangic_kucuk_parca_sol_ust_kenar_ekler():
-    # Sade kare: ust bolge [0,8] tum eni kaplar; baslangic bolgenin solundan
-    # %22 -> x=1.76, ust kenar; hedefte vertex yok -> node eklenir (sekil korunur).
+def test_baslangic_kucuk_parca_sag_ust_kenar_ekler():
+    # Sade kare: ust bolge [0,8] tum eni kaplar; VARSAYILAN artik SAG-UST ->
+    # bolgenin solundan %78 -> x=6.24, ust kenar; node eklenir (sekil korunur).
     pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert abs(by - 8) < 1e-9              # gercek ust kontur
-    assert abs(bx - 1.76) < 1e-6          # bolgenin solundan %22 (sol-ust)
+    assert abs(bx - 6.24) < 1e-6          # bolgenin solundan %78 (sag-ust)
     assert ekle is not None               # mid-edge lead-in eklendi
+    # Sol destek istenirse sol-ust (soldan %22)
+    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(-1.0, 1.0))
+    bx2, _by = _efektif_baslangic(pts, i2, e2)
+    assert abs(bx2 - 1.76) < 1e-6
 
 
-def test_baslangic_nokta_ekleme_kapali_sol_ust():
-    # nokta_ekle=False -> ekleme yok; hedefe en yakin mevcut vertex (sol-ust)
+def test_baslangic_nokta_ekleme_kapali_sag_ust():
+    # nokta_ekle=False -> ekleme yok; hedefe en yakin mevcut vertex (VARSAYILAN
+    # sag-ust -> (8,8)).
     pts = [(0, 0, 0, 0, 0), (8, 0, 0, 0, 0), (8, 8, 0, 0, 0), (0, 8, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts, nokta_ekle=False)
     assert ekle is None
-    assert (pts[i][0], pts[i][1]) == (0, 8)
+    assert (pts[i][0], pts[i][1]) == (8, 8)
 
 
 def test_baslangic_egik_n_gercek_ustte_kalir():
@@ -149,15 +154,15 @@ def test_baslangic_egik_n_gercek_ustte_kalir():
 
 
 def test_baslangic_kose_payi_tam_kosede_durmaz():
-    # Ust bolge yalnizca [2,10] (x<2 tarafi alcak). Baslangic bu bolgenin sol
-    # ucundan (x=2 kosesi) az iceride, gercek ust kenarda (y=10) durmali.
+    # Ust bolge [2,10]. VARSAYILAN sag-ust -> baslangic bu bolgenin SAG ucundan
+    # (x=10 kosesi) az iceride, gercek ust kenarda (y=10) durmali (kosede degil).
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0), (10, 10, 0, 0, 0),
            (2, 10, 0, 0, 0), (2, 4, 0, 0, 0), (0, 4, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert abs(by - 10) < 1e-9             # gercek ust kenar (gobekte degil)
-    assert bx > 2.5                         # (2,10) kosesinden ic tarafta
-    assert bx < 5.0
+    assert bx < 9.5                         # (10,10) kosesinden ic tarafta
+    assert bx > 6.0
 
 
 def test_baslangic_sag_ust_secenegi():
@@ -170,19 +175,19 @@ def test_baslangic_sag_ust_secenegi():
 
 
 def test_baslangic_dikey_serit_destek_kenarinda():
-    # Dikey ince serit: baslangic destek tarafi (varsayilan SOL) kenarda,
-    # alttan ~%25 (elle-optimize dosyasi bu yonde).
+    # Dikey ince serit: baslangic destek tarafi (VARSAYILAN artik SAG) kenarda,
+    # alttan ~%25 (iki uctan destekli kalir).
     pts = [(0, 0, 0, 0, 0), (10, 0, 0, 0, 0),
            (10, 100, 0, 0, 0), (0, 100, 0, 0, 0)]
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
     assert uzun is True
-    assert abs(bx - 0) < 1e-6             # sol kenar (destek tarafi)
+    assert abs(bx - 10) < 1e-6            # sag kenar (destek tarafi)
     assert 10 < by < 45                    # alttan ~%25
-    # Saga bakan destek istenirse sag kenar
-    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
+    # Sola bakan destek istenirse sol kenar
+    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(-1.0, 1.0))
     bx2, _by = _efektif_baslangic(pts, i2, e2)
-    assert abs(bx2 - 10) < 1e-6           # sag kenar
+    assert abs(bx2 - 0) < 1e-6            # sol kenar
 
 
 def test_baslangic_uzun_yatay_serit_orta_sag():
@@ -207,13 +212,33 @@ def test_baslangic_ayakli_dusey_govde_stem_kenarinda():
     assert G.ayakli_dusey_govde_mi(pts, 100.0, 100.0) is True
     i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
     bx, by = _efektif_baslangic(pts, i, ekle)
-    assert abs(bx - 40) < 1e-6              # govdenin sol (destek) kenari
+    assert abs(bx - 60) < 1e-6              # govdenin sag (VARSAYILAN destek) kenari
     assert by < 60                          # sivri tepede degil, alt-govdede
     assert by > 20                          # ayagin uzerinde
-    # Saga bakan destek istenirse govdenin sag kenari
-    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
+    # Sola bakan destek istenirse govdenin sol kenari
+    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(-1.0, 1.0))
     bx2, _by = _efektif_baslangic(pts, i2, e2)
-    assert abs(bx2 - 60) < 1e-6            # govdenin sag kenari
+    assert abs(bx2 - 40) < 1e-6            # govdenin sol kenari
+
+
+def test_dusey_bar_sag_kenar_orta_alt():
+    # Dolu (ince olmayan) dikey cubuk: dikey_serit_mi'ye takilmaz ama dusey_bar
+    # olarak yakalanir -> baslangic SAG kenarda, alttan ~%25.
+    pts = [(0, 0, 0, 0, 0), (30, 0, 0, 0, 0),
+           (30, 120, 0, 0, 0), (0, 120, 0, 0, 0)]
+    assert G.dikey_serit_mi(pts, 30.0, 120.0) is False   # dolu -> ince degil
+    assert G.dusey_bar_mi(pts, 30.0, 120.0) is True
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
+    bx, by = _efektif_baslangic(pts, i, ekle)
+    assert abs(bx - 30) < 1e-6            # sag kenar
+    assert 15 < by < 55                    # alttan ~%25
+
+
+def test_dusey_bar_kare_yakalamaz():
+    # Kare (h ~ w) bar sayilmaz.
+    pts = [(0, 0, 0, 0, 0), (100, 0, 0, 0, 0),
+           (100, 100, 0, 0, 0), (0, 100, 0, 0, 0)]
+    assert G.dusey_bar_mi(pts, 100.0, 100.0) is False
 
 
 def test_ayakli_dusey_govde_normal_parcayi_yakalamaz():

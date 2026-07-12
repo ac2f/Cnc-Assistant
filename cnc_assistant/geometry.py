@@ -98,9 +98,11 @@ BASLANGIC_KABUL_TOL = 0.02
 UST_Y_AGIRLIK = 0.10
 
 # DESTEK/BASLANGIC YONU (dx, dy). Yalnizca YATAY isaret (dx) kullanilir:
-# dx<0 -> sol-ust (varsayilan), dx>0 -> sag-ust, dx~0 -> orta-ust. Dikey serit
+# dx>0 -> SAG-UST (varsayilan), dx<0 -> sol-ust, dx~0 -> orta-ust. Dikey serit
 # parcalarda ayni isaret hangi yan kenarin secilecegini belirler.
-DESTEK_YONU = (-1.0, 1.0)
+# KURAL: Baslangic, vektorun PROGRAMA GELDIGI cerceve'de daima SAG-UST
+# referans alinarak yerlestirilir (kesim sirasi sag-ust dominant ilerler).
+DESTEK_YONU = (1.0, 1.0)
 
 # Yon-projeksiyonu primitifi (destek_ucu_indeks) icin "en uc" bandi.
 DESTEK_BANT_ORANI = 0.02
@@ -543,6 +545,31 @@ def dikey_serit_mi(pts, w, h, esik=None):
     return azami_yatay_kalinlik_orani(pts, xmin, ymin, w, h) < esik
 
 
+def dusey_bar_mi(pts, w, h, oran=1.8, cv_esik=0.12):
+    """Parca DUSEY (uzun) ve boyunca yatay kalinligi NEREDEYSE SABIT olan bir
+    'cubuk/bar' mi? Dolu (ince olmayan) dikey dikdortgenler `dikey_serit_mi`ye
+    takilmaz (azami kalinlik = tam genislik) ama CNC'de yine iki uctan destekli
+    kesilmeli -> baslangic yan kenarda, orta-altta. Kalinlik degisimi (CV) kucuk
+    + h >> w oldugunda bar sayilir; harfler (serif/govde degisken) elenir."""
+    if h < oran * w:
+        return False
+    ymin = min(p[1] for p in pts)
+    ths = []
+    for k in range(1, 20):
+        Y = ymin + h * k / 20.0
+        sol = sol_kontur_x(pts, Y)
+        sag = sag_kontur_x(pts, Y)
+        if sol is not None and sag is not None:
+            ths.append(sag[0] - sol[0])
+    if len(ths) < 6:
+        return False
+    m = sum(ths) / len(ths)
+    if m <= 1e-9:
+        return False
+    cv = (sum((t - m) ** 2 for t in ths) / len(ths)) ** 0.5 / m
+    return cv < cv_esik
+
+
 def _tack_kalinliklari(pts, xmin, ymin, w, h, levels=40):
     """Parcanin ALT bandindaki azami yatay kalinligini (taban) ve UST govdesinin
     medyan yatay kalinligini doner. Ayakli-dusey-govde tespiti icin: taban genis,
@@ -660,7 +687,8 @@ def _baslangic_hedef_nokta(pts, **kw):
     # 1) Dikey ince serit / "I" -> sag kontur, sag-orta/sag-alt. Serit tespiti
     #    boyunca AZAMI yatay kalinliga bakar (serifli "I" de yakalanir).
     serit = dikey_serit_mi(pts, w, h,
-                           kw.get("serit_kalinlik_orani", SERIT_KALINLIK_ORANI))
+                           kw.get("serit_kalinlik_orani", SERIT_KALINLIK_ORANI)) \
+        or dusey_bar_mi(pts, w, h)
     if serit:
         ty = ymin + serit_y * h
         # Destek tarafi (varsayilan SOL): dx<=0 -> sol kontur, dx>0 -> sag.
@@ -692,7 +720,13 @@ def _baslangic_hedef_nokta(pts, **kw):
     band = kw.get("ust_bant_orani", UST_BANT_ORANI)
     kosular = ust_kosular(pts, ymax - band * h, w) if h > 1e-12 else []
     if not kosular:
-        tx = xmin + BASLANGIC_X_ORANI * w
+        # Destek yonune gore ust kenarda (varsayilan SAG-UST) konumla.
+        if dx > 0.05:
+            tx = xmax - BASLANGIC_X_ORANI * w
+        elif abs(dx) <= 0.05:
+            tx = xmin + 0.5 * w
+        else:
+            tx = xmin + BASLANGIC_X_ORANI * w
         r = ust_kontur_y(pts, tx)
         return (tx, r[0] if r else ymax,
                 r[1] if r else None, r[2] if r else False, uzun_ince)
