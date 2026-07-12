@@ -151,8 +151,25 @@ def _numaralandir(varliklar):
     return {id(v): i + 1 for i, (v, _cx, _cy) in enumerate(merkez)}
 
 
+# PDF/SVG cikti olcegi: DXF birimi (genelde mm) -> fiziksel mm 1:1 olsun diye
+# 1 inch = 25.4 mm kabul edilir. Boylece Corel/CAD'e alinan PDF, DXF ile
+# BIREBIR ayni olcude olcum verir.
+MM_PER_INCH = 25.4
+
+
+def _veri_sinirlari(varliklar):
+    """Varliklarin ortak veri sinirlarini (xmin, xmax, ymin, ymax) doner."""
+    xs, ys = [], []
+    for v in varliklar:
+        for p in (_komut_flatten(v["d"]) if "d" in v else v.get("kontur") or []):
+            xs.append(p[0]); ys.append(p[1])
+    if not xs:
+        return None
+    return min(xs), max(xs), min(ys), max(ys)
+
+
 def _kontur_ciz(ax, varliklar, riskli_handlelar, stil,
-                baslangic_etiketi=True, numaralar=None):
+                baslangic_etiketi=True, numaralar=None, sinir=None):
     from matplotlib.patches import PathPatch
     for v in varliklar:
         riskli = v["handle"] in riskli_handlelar
@@ -183,11 +200,16 @@ def _kontur_ciz(ax, varliklar, riskli_handlelar, stil,
     for v in varliklar:
         for p in (_komut_flatten(v["d"]) if "d" in v else v.get("kontur") or []):
             xs.append(p[0]); ys.append(p[1])
-    if xs:
+    if sinir is not None:
+        ax.set_xlim(sinir[0], sinir[1])
+        ax.set_ylim(sinir[2], sinir[3])
+    elif xs:
         pad = max((max(xs) - min(xs)), (max(ys) - min(ys))) * 0.03 + 1
         ax.set_xlim(min(xs) - pad, max(xs) + pad)
         ax.set_ylim(min(ys) - pad, max(ys) + pad)
-    ax.set_aspect("equal")
+    # 'box' ayarlanabilir + kutu zaten veri en-boyuna gore olculdugu icin
+    # esit-en-boy veri limitlerini DEGISTIRMEZ -> 1:1 olcek korunur.
+    ax.set_aspect("equal", adjustable="box")
     ax.grid(bool(stil["izgara"]), alpha=0.25)
     _eksen_sadelestir(ax)
 
@@ -208,24 +230,53 @@ def onizleme_uret(oncesi_varliklar, sonrasi_varliklar, riskli_handlelar,
     s = _stil(stil)
     numaralar = _numaralandir(sonrasi_varliklar) if s["numara"] else None
 
+    # Iki panel de AYNI olcegi kullansin diye ortak sinir. Cikti, DXF ile
+    # BIREBIR (1 DXF birimi = 1 mm) olcude uretilir: figur boyutu veriden
+    # hesaplanir, eksen kutusu tam inch olarak konumlandirilir (tight_layout
+    # KULLANILMAZ -> olcek bozulmaz). Baslik/lejant eksen kutusunun disindaki
+    # kenar bosluguna gelir, olcegi etkilemez.
+    sinir = _veri_sinirlari(list(oncesi_varliklar) + list(sonrasi_varliklar))
+    if sinir is None:
+        print("[Onizleme] cizilecek varlik yok.")
+        return False
+    xmin, xmax, ymin, ymax = sinir
+    W = xmax - xmin; H = ymax - ymin
+    pad = max(W, H) * 0.03 + 1.0
+    lim = (xmin - pad, xmax + pad, ymin - pad, ymax + pad)
+    axW = (W + 2 * pad) / MM_PER_INCH          # panel eni (inch, 1:1)
+    axH = (H + 2 * pad) / MM_PER_INCH          # panel boyu (inch, 1:1)
+    kenar = 0.16                               # yan/alt bosluk (inch)
+    ust = 0.55 if baslik else kenar            # baslik seridi (inch)
+
     if paneller == "birlikte":
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
-        _kontur_ciz(ax1, oncesi_varliklar, set(), s, numaralar=numaralar)
+        bosluk = 0.6                           # paneller arasi (inch)
+        figW = 2 * axW + bosluk + 2 * kenar
+        figH = axH + ust + kenar
+        fig = plt.figure(figsize=(figW, figH))
+        ax1 = fig.add_axes([kenar / figW, kenar / figH, axW / figW, axH / figH])
+        ax2 = fig.add_axes([(kenar + axW + bosluk) / figW, kenar / figH,
+                            axW / figW, axH / figH])
+        _kontur_ciz(ax1, oncesi_varliklar, set(), s, numaralar=numaralar,
+                    sinir=lim)
         ax1.set_title("ONCESI - orijinal baslangic noktalari")
         _kontur_ciz(ax2, sonrasi_varliklar, riskli_handlelar, s,
-                    numaralar=numaralar)
+                    numaralar=numaralar, sinir=lim)
         ax2.set_title("SONRASI - optimize baslangic + riskli parca")
         ax2.plot([], [], "o", color=s["bas_renk"], label="Yeni kesim baslangici")
         ax2.plot([], [], color=s["riskli_renk"], label="Riskli parca (hold-down)")
         ax2.legend(loc="upper right", fontsize=8)
         if baslik:
-            fig.suptitle("Baslangic Noktasi Optimizasyonu", fontsize=13)
+            fig.suptitle("Baslangic Noktasi Optimizasyonu (1:1 olcek)",
+                         fontsize=13)
     else:
         oncesi = (paneller == "oncesi")
-        fig, ax = plt.subplots(figsize=(12, 9))
+        figW = axW + 2 * kenar
+        figH = axH + ust + kenar
+        fig = plt.figure(figsize=(figW, figH))
+        ax = fig.add_axes([kenar / figW, kenar / figH, axW / figW, axH / figH])
         _kontur_ciz(ax, oncesi_varliklar if oncesi else sonrasi_varliklar,
                     set() if oncesi else riskli_handlelar, s,
-                    numaralar=numaralar)
+                    numaralar=numaralar, sinir=lim)
         ax.set_title("ONCESI - orijinal baslangic" if oncesi
                      else "SONRASI - optimize baslangic")
         if not oncesi:
@@ -233,10 +284,9 @@ def onizleme_uret(oncesi_varliklar, sonrasi_varliklar, riskli_handlelar,
             ax.plot([], [], color=s["riskli_renk"], label="Riskli parca")
             ax.legend(loc="upper right", fontsize=8)
 
-    fig.tight_layout()
     _kaydet(fig, cikti_yol)
     plt.close(fig)
-    print(f"[Onizleme] {paneller} -> {cikti_yol}")
+    print(f"[Onizleme] {paneller} (1:1) -> {cikti_yol}")
     return True
 
 
