@@ -48,10 +48,13 @@ BASLANGIC_X_ORANI = 0.22
 # noktalarindan en az bu kadar iceride tutulur -> "tam kosede" degil, az iceride.
 BASLANGIC_KOSE_PAYI = 0.05
 
-# Ust bant kalinligi (bbox yuksekliginin orani): parcanin y >= ymax - bu*bant
-# olan bolgeleri "en ust" sayilir. Kucuk tutulur -> baslangic her zaman gercek
-# tepeye yakin oturur; parcanin gobegine/egimine asla dusmez.
-UST_BANT_ORANI = 0.12
+# Ust bolge (kose) arama bandi: parca boyunun bu orani kadar ustteki bolgeler
+# "aday ust bolge" sayilir. GENIS tutulur (~%35) -> ust kismi SAG'da olan (sol
+# tarafi daha alcak) karmasik/serpme parcalarda (ok/kama, yan yatik harfler)
+# bile SOL bolge yakalanir; secilen X'te nokta yine gercek ust kontura (ust
+# zarf) oturur, gobege/egime dusmez. Dar band ust kismi sagda olan parcalarda
+# yanlislikla sag-uste kayiyordu; genis band bunu duzeltir.
+UST_BANT_ORANI = 0.35
 
 # Ust bolge (kose) aday esigi: bir ust bolge, bbox eninin bu orani kadar
 # genisse "kayda deger" sayilir (kucuk sivri tepeler yerine gercek ust kenar

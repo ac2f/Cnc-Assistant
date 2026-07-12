@@ -187,6 +187,14 @@ konsola yazilir); istenirse `--web --tarayici-ac`.
   Ctrl+Z/Y, Ctrl+W, Ctrl+1..9) ve **ayar hatirlama** (tema, parametreler,
   son klasor - localStorage).
 
+**v1.8 yenilikleri:**
+- **Karmasik parcalarda otomatik baslangic iyilestirmesi:** Ust bolge arama
+  bandi genisletildi (~%12 -> ~%35). Ust kismi SAG'da olan (sol tarafi daha
+  alcak) ok/kama/yan-yatik-harf gibi serpme parcalarda baslangic artik dogru
+  SOL bolgeye (nesnenin boynuna/koluna) oturuyor; onceden yanlislikla sag-uste
+  kayiyordu. Elle-optimize dosyasiyla eslesme %65/%74'ten **%75/%83'e** cikti;
+  gobek/egim hatasi 0, sekil %100 korundu. Tamamen otomatik (elle referans yok).
+
 **v1.7 yenilikleri:**
 - **Gercek NFP + Genetik nesting motoru** (`nesting_nfp.py`, pyclipper): No-Fit
   Polygon (Minkowski) geometrisi ile parca-parca cakisma, Inner-Fit ile
