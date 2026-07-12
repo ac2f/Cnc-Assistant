@@ -70,6 +70,15 @@ SERIT_Y_ORANI = 0.25
 # "I" de yakalanir). Bunlarin baslangici sag kenar orta-altta olur.
 SERIT_KALINLIK_ORANI = 0.24
 
+# "Raptiye" / ayakli dusey govde (⊥, "d", "I"-kiris, T-ayak): GENIS bir tabana
+# oturan INCE dusey govde. Serit degildir (genis ayak azami-kalinligi buyutur),
+# ama parcanin UST GOVDESI incedir. Baslangic sivri tepede (govdenin ucunda)
+# degil, govdenin destek-tarafi kenarinda, alttan TACK_Y_ORANI kadar yukarida
+# olmali -> lead-in kirilgan uc yerine saglam dusey kenara oturur.
+TACK_TABAN_ORANI = 0.75    # alt %22 bandinda azami yatay kalinlik / genislik >= bu
+TACK_GOVDE_ORANI = 0.55    # ust govdede (y %55-%95) medyan kalinlik / genislik <= bu
+TACK_Y_ORANI = 0.40        # baslangic yuksekligi (alttan, bbox orani)
+
 # Ust bolge secimi: en genis (en destekli) ust bolge tercih edilir; birden cok
 # bolge bu oranin ustunde genislikteyse destek yonundeki (sol) secilir. Boylece
 # sivri tepe (orn. yan yatik "A"nin ucu) yerine genis/duz ust kenar secilir.
@@ -534,6 +543,42 @@ def dikey_serit_mi(pts, w, h, esik=None):
     return azami_yatay_kalinlik_orani(pts, xmin, ymin, w, h) < esik
 
 
+def _tack_kalinliklari(pts, xmin, ymin, w, h, levels=40):
+    """Parcanin ALT bandindaki azami yatay kalinligini (taban) ve UST govdesinin
+    medyan yatay kalinligini doner. Ayakli-dusey-govde tespiti icin: taban genis,
+    ust govde ince olan parcalar ("raptiye"/⊥, "d", "I"-kiris) yakalanir."""
+    taban = 0.0
+    govde = []
+    for k in range(1, levels):
+        f = k / levels
+        Y = ymin + h * f
+        sol = sol_kontur_x(pts, Y)
+        sag = sag_kontur_x(pts, Y)
+        if sol is None or sag is None:
+            continue
+        t = sag[0] - sol[0]
+        if f <= 0.22:
+            taban = max(taban, t)
+        elif 0.55 <= f <= 0.95 and t > 0:
+            govde.append(t)
+    med = sorted(govde)[len(govde) // 2] if govde else 0.0
+    return taban, med
+
+
+def ayakli_dusey_govde_mi(pts, w, h,
+                          taban_orani=TACK_TABAN_ORANI,
+                          govde_orani=TACK_GOVDE_ORANI):
+    """Parca genis bir tabana oturan ince dusey govde ("raptiye"/⊥, "d",
+    "I"-kiris) mi? Serit degildir (genis ayak) ama ust govdesi incedir ->
+    baslangic govdenin ucundaki sivri tepede degil, govde kenarinda olmali."""
+    if h <= 0.9 * w:
+        return False
+    xmin = min(p[0] for p in pts)
+    ymin = min(p[1] for p in pts)
+    taban, govde = _tack_kalinliklari(pts, xmin, ymin, w, h)
+    return taban >= taban_orani * w and 0 < govde <= govde_orani * w
+
+
 def ust_kosular(pts, ythr, w):
     """Parcanin ust bant (y >= ythr) icindeki GERCEK ust kontur parcalarini
     (X araliklari) doner: [(x_sol, x_sag), ...]. Duz ve yay segmentleri ele
@@ -624,6 +669,24 @@ def _baslangic_hedef_nokta(pts, **kw):
             return (r[0], ty, r[1], r[2], True) if r else (xmax, ty, None, False, True)
         r = sol_kontur_x(pts, ty)
         return (r[0], ty, r[1], r[2], True) if r else (xmin, ty, None, False, True)
+
+    # 1b) Ayakli dusey govde ("raptiye"/⊥, "d", "I"-kiris): serit degil (genis
+    #     ayak azami-kalinligi buyutur) ama UST GOVDE ince. Baslangic govdenin
+    #     ucundaki sivri tepede degil, govdenin destek-tarafi (varsayilan SOL)
+    #     kenarinda, alttan TACK_Y_ORANI kadar yukarida olmali.
+    if ayakli_dusey_govde_mi(
+        pts, w, h,
+        kw.get("tack_taban_orani", TACK_TABAN_ORANI),
+        kw.get("tack_govde_orani", TACK_GOVDE_ORANI),
+    ):
+        ty = ymin + kw.get("tack_y_orani", TACK_Y_ORANI) * h
+        if dx > 0.05:
+            r = sag_kontur_x(pts, ty)
+            return (r[0], ty, r[1], r[2], uzun_ince) if r else \
+                (xmax, ty, None, False, uzun_ince)
+        r = sol_kontur_x(pts, ty)
+        return (r[0], ty, r[1], r[2], uzun_ince) if r else \
+            (xmin, ty, None, False, uzun_ince)
 
     # 2) Gercek ust bolgeler (ust bant kosulari).
     band = kw.get("ust_bant_orani", UST_BANT_ORANI)

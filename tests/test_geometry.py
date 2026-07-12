@@ -197,6 +197,32 @@ def test_baslangic_uzun_yatay_serit_orta_sag():
     assert bx / 900 > 0.55                  # ust-orta ile sag-ust arasi
 
 
+def test_baslangic_ayakli_dusey_govde_stem_kenarinda():
+    # "Raptiye"/⊥: genis tabana oturan ince dusey govde. Serit degildir (genis
+    # ayak) ama ust govde ince -> baslangic govdenin ucundaki sivri tepede
+    # DEGIL, govde kenarinda, alttan ~%40. Taban y[0,20], govde x[40,60].
+    pts = [(0, 0, 0, 0, 0), (100, 0, 0, 0, 0), (100, 20, 0, 0, 0),
+           (60, 20, 0, 0, 0), (60, 100, 0, 0, 0), (40, 100, 0, 0, 0),
+           (40, 20, 0, 0, 0), (0, 20, 0, 0, 0)]
+    assert G.ayakli_dusey_govde_mi(pts, 100.0, 100.0) is True
+    i, uzun, ekle = G.baslangic_indeksi_belirle(pts)
+    bx, by = _efektif_baslangic(pts, i, ekle)
+    assert abs(bx - 40) < 1e-6              # govdenin sol (destek) kenari
+    assert by < 60                          # sivri tepede degil, alt-govdede
+    assert by > 20                          # ayagin uzerinde
+    # Saga bakan destek istenirse govdenin sag kenari
+    i2, _u, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0))
+    bx2, _by = _efektif_baslangic(pts, i2, e2)
+    assert abs(bx2 - 60) < 1e-6            # govdenin sag kenari
+
+
+def test_ayakli_dusey_govde_normal_parcayi_yakalamaz():
+    # Genis/dolu dikdortgen ayakli-govde SAYILMAZ (ust govde ince degil).
+    pts = [(0, 0, 0, 0, 0), (100, 0, 0, 0, 0),
+           (100, 120, 0, 0, 0), (0, 120, 0, 0, 0)]
+    assert G.ayakli_dusey_govde_mi(pts, 100.0, 120.0) is False
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0
