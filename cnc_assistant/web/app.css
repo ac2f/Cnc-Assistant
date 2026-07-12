@@ -211,10 +211,32 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .kat-lej i.l-eski{border-top:2px dashed #8e8e93}
 .blok .no{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
   font-weight:700;background:var(--yuzey);border:1px solid var(--cizgi);flex:none;font-size:13px}
+.blok .no-duz{width:34px;height:30px;border-radius:9px;text-align:center;padding:0;
+  font-weight:700;background:var(--yuzey);border:1px solid var(--cizgi);flex:none;font-size:13px;
+  color:var(--metin);cursor:text;-moz-appearance:textfield}
+.blok .no-duz::-webkit-outer-spin-button,.blok .no-duz::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+.blok .no-duz:focus{border-color:var(--acc);outline:none}
+.blok .bveri{min-width:0}
 .blok .bx{font-size:13px} .blok .by{font-size:11.5px;color:var(--metin2)}
 .blok .etk{margin-left:auto;font-size:10px;padding:2px 8px;border-radius:20px;
   border:1px solid var(--cizgi);color:var(--metin2);flex:none}
 .blok .etk.ic{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 50%,var(--cizgi))}
+.blok-sil{flex:none;width:24px;height:24px;border-radius:7px;border:1px solid transparent;
+  background:transparent;color:var(--metin2);font-size:16px;line-height:1;cursor:pointer;opacity:.5}
+.blok:hover .blok-sil{opacity:1}
+.blok-sil:hover{background:color-mix(in srgb,var(--uyari) 16%,transparent);color:var(--uyari);
+  border-color:color-mix(in srgb,var(--uyari) 45%,var(--cizgi))}
+.gc-grup{display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.gc-grup .sec-say{font-size:11.5px;color:var(--metin2)}
+.dugme.tehlike{color:var(--uyari);border-color:color-mix(in srgb,var(--uyari) 40%,var(--cizgi))}
+.dugme.tehlike:hover:not(:disabled){background:color-mix(in srgb,var(--uyari) 14%,transparent)}
+.dugme:disabled{opacity:.4;cursor:default}
+.gc-info{display:flex;gap:8px 16px;flex-wrap:wrap;align-items:center;margin:2px 0 14px;
+  padding:11px 13px;border:1px solid var(--cizgi);border-radius:12px;background:var(--yuzey)}
+.gc-info .ti{display:flex;flex-direction:column;gap:2px}
+.gc-info .tl{font-size:10.5px;color:var(--metin2);text-transform:uppercase;letter-spacing:.3px}
+.gc-info .ti b{font-size:14px;font-variant-numeric:tabular-nums}
+.gc-info .sure b{color:var(--acc);font-size:16px}
 .gc-arac{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 .ayrac{width:1px;height:24px;background:var(--cizgi);margin:0 2px}
 .durum{font-size:12.5px;color:var(--metin2);margin-top:10px;white-space:pre-wrap;line-height:1.6}

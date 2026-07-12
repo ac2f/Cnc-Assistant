@@ -80,12 +80,18 @@ def _ozet_bloklar(orijinal):
     out = []
     for i, blok in enumerate(orijinal):
         bx, by = GC.blok_bas_xy(blok)
+        sx, sy = GC._blok_son_xy(blok, (bx, by))
         poly = GC.blok_polygon(blok)
         merkez = (sum(p[0] for p in poly) / len(poly),
                   sum(p[1] for p in poly) / len(poly)) if poly else (bx, by)
-        out.append({"id": i, "x": bx, "y": by, "bbox": GC.blok_bbox(blok),
+        zmin, zmax = GC.blok_z_araligi(blok)
+        out.append({"id": i, "x": bx, "y": by, "son": [sx, sy],
+                    "bbox": GC.blok_bbox(blok),
                     "komut": GC.blok_svg_komut(blok), "merkez": merkez,
-                    "derinlik": derinlik[i], "satir": len(blok)})
+                    "derinlik": derinlik[i], "satir": len(blok),
+                    "kesim_uz": round(GC.blok_kesim_uzunlugu(blok), 3),
+                    "dalis_uz": round(GC.blok_dalis_uzunlugu(blok), 3),
+                    "z_min": zmin, "z_max": zmax})
     return out
 
 
@@ -323,6 +329,7 @@ def api_gcode_yukle(veri):
     return {"guvenli": True, "uyarilar": prog.uyarilar,
             "sabit_son": prog.sabit_son is not None,
             "birim": prog.birim,
+            "tespit_feed": GC.kesim_feed_tespit(prog.satirlar),
             "karsilastir": prog.karsilastir(),
             "bloklar": bloklar, "onerilen_sira": onerilen}
 

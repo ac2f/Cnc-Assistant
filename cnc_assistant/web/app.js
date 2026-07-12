@@ -220,6 +220,10 @@ async function yukle(doc) {
       tarih: [{ sira: g.onerilen_sira.slice(), etiket: "auto" }], aktif: 0,
       canli: true, secim: new Set(), capa: null,
       karsilastir: AYAR.al("gcKarsi", false),
+      feed: AYAR.al("gcFeed", g.tespit_feed || 1000),
+      rapidHiz: AYAR.al("gcRapid", 3000),
+      dalisHiz: AYAR.al("gcDalis", 300),
+      tespitFeed: g.tespit_feed || null,
       tabAcik: AYAR.al("tabAcik", false), tabAdet: AYAR.al("tabAdet", 4),
       tablar: null };
   }
@@ -478,9 +482,11 @@ function gcodeIcerik(doc) {
         <button class="dugme" id="g_kaydet">Kaydet (.tap)</button>
       </div>
       <div class="cipler" id="g_karsilastir"></div>
+      <div class="gc-info" id="g_info"></div>
       <div class="gc-govde">
         <div>
           <div class="pbaslik" style="margin-bottom:8px">Kesim sirasi — surukle · Shift=aralik · Ctrl=coklu</div>
+          <div class="gc-grup" id="g_grup"></div>
           <div class="liste" id="g_liste"></div>
         </div>
         <div>
@@ -511,8 +517,107 @@ function gcodeIcerik(doc) {
     $("g_kaydet").onclick = () => gcKaydet(doc);
     gcKarsilastirCiz(doc);
     gcGecmisCiz(doc);
+    gcGrupCiz(doc);
+    gcInfoCiz(doc);
+    gcCiz(doc, true);
   }, 0);
   return el;
+}
+
+// ---- Grup/duzenleme araclari (secime gore) ----
+function gcSecimIdler(doc) { return doc.gc.sira.filter(id => doc.gc.secim.has(id)); }
+function gcTumSec(doc) { doc.gc.secim = new Set(doc.gc.sira); doc.gc.capa = doc.gc.sira[0];
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
+function gcSecTemizle(doc) { doc.gc.secim.clear(); doc.gc.capa = null;
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
+function gcSecSil(doc) {
+  const sec = doc.gc.secim; if (!sec.size) return;
+  const yeni = doc.gc.sira.filter(id => !sec.has(id));
+  if (!yeni.length) { bildir("Tum bloklar silinemez.", true); return; }
+  const n = sec.size; doc.gc.secim = new Set(); doc.gc.capa = null;
+  gcAdimEkle(doc, yeni, `sil ×${n}`); gcGrupCiz(doc);
+}
+function gcTersCevir(doc) {
+  const idler = gcSecimIdler(doc);
+  if (idler.length < 2) return;
+  const poz = doc.gc.sira.map((id, i) => doc.gc.secim.has(id) ? i : -1).filter(i => i >= 0);
+  const ters = idler.slice().reverse();
+  const a = doc.gc.sira.slice();
+  poz.forEach((p, k) => a[p] = ters[k]);
+  gcAdimEkle(doc, a, `ters ×${idler.length}`);
+}
+function gcGrupKaydir(doc, yon) {   // yon: -1 yukari, +1 asagi
+  const a = doc.gc.sira.slice(), sec = doc.gc.secim;
+  const poz = a.map((id, i) => sec.has(id) ? i : -1).filter(i => i >= 0);
+  if (!poz.length) return;
+  if (yon < 0 && poz[0] === 0) return;
+  if (yon > 0 && poz[poz.length - 1] === a.length - 1) return;
+  const sirali = yon < 0 ? poz : poz.slice().reverse();
+  sirali.forEach(p => { const q = p + yon; [a[p], a[q]] = [a[q], a[p]]; });
+  gcAdimEkle(doc, a, `${yon < 0 ? "▲" : "▼"} ×${poz.length}`);
+}
+function gcGrupCiz(doc) {
+  const kap = $("g_grup"); if (!kap) return;
+  const n = doc.gc.secim.size;
+  kap.innerHTML = `
+    <button class="dugme hayalet kucuk" id="gg_tum">Tümü</button>
+    <button class="dugme hayalet kucuk" id="gg_temiz">Temizle</button>
+    <span class="ayrac"></span>
+    <span class="sec-say">${n ? n + " seçili" : "seçim yok"}</span>
+    <span style="flex:1"></span>
+    <button class="dugme hayalet kucuk" id="gg_yuk" ${n?"":"disabled"}>▲</button>
+    <button class="dugme hayalet kucuk" id="gg_asa" ${n?"":"disabled"}>▼</button>
+    <button class="dugme hayalet kucuk" id="gg_ters" ${n>1?"":"disabled"}>Ters</button>
+    <button class="dugme hayalet kucuk tehlike" id="gg_sil" ${n?"":"disabled"}>Sil</button>`;
+  $("gg_tum").onclick = () => gcTumSec(doc);
+  $("gg_temiz").onclick = () => gcSecTemizle(doc);
+  $("gg_yuk").onclick = () => gcGrupKaydir(doc, -1);
+  $("gg_asa").onclick = () => gcGrupKaydir(doc, +1);
+  $("gg_ters").onclick = () => gcTersCevir(doc);
+  $("gg_sil").onclick = () => gcSecSil(doc);
+}
+
+// ---- Takim yolu bilgisi + tahmini sure ----
+function gcMetrikler(doc) {
+  let kesim = 0, dalis = 0, bosta = 0, zmin = null, zmax = null, onceSon = null;
+  doc.gc.sira.forEach(id => {
+    const b = blokById(doc, id); if (!b) return;
+    kesim += b.kesim_uz || 0; dalis += b.dalis_uz || 0;
+    if (onceSon) bosta += Math.hypot(b.x - onceSon[0], b.y - onceSon[1]);
+    onceSon = b.son || [b.x, b.y];
+    if (b.z_min != null) zmin = zmin == null ? b.z_min : Math.min(zmin, b.z_min);
+    if (b.z_max != null) zmax = zmax == null ? b.z_max : Math.max(zmax, b.z_max);
+  });
+  const feed = doc.gc.feed || 1, rapid = doc.gc.rapidHiz || 1, dhiz = doc.gc.dalisHiz || feed;
+  const dk = kesim / feed + dalis / dhiz + bosta / rapid;
+  return { kesim, dalis, bosta, zmin, zmax, blok: doc.gc.sira.length, dk };
+}
+function _sureStr(dk) {
+  if (!isFinite(dk) || dk <= 0) return "—";
+  const sn = Math.round(dk * 60), s = sn % 60, m = Math.floor(sn / 60) % 60, h = Math.floor(sn / 3600);
+  return (h ? h + "sa " : "") + (m || h ? m + "dk " : "") + s + "sn";
+}
+function gcInfoCiz(doc) {
+  const kap = $("g_info"); if (!kap) return;
+  const m = gcMetrikler(doc), u = doc.veri.birim || "";
+  const inp = (id, val, ttl) => `<input type="number" class="alan kk" id="${id}" value="${val}"
+    title="${ttl}" style="width:74px" min="1" step="10">`;
+  kap.innerHTML = `
+    <div class="ti"><span class="tl">Blok</span><b>${m.blok}</b></div>
+    <div class="ti"><span class="tl">Kesim yolu</span><b>${m.kesim.toFixed(1)} ${u}</b></div>
+    <div class="ti"><span class="tl">Boşta yol</span><b>${m.bosta.toFixed(1)} ${u}</b></div>
+    <div class="ti"><span class="tl">Dalış</span><b>${m.dalis.toFixed(1)} ${u}</b></div>
+    <div class="ti"><span class="tl">Z aralığı</span><b>${m.zmin==null?"—":m.zmin.toFixed(1)+" … "+m.zmax.toFixed(1)}</b></div>
+    <span class="ayrac"></span>
+    <div class="ti"><span class="tl">Kesim ${u}/dk${doc.gc.tespitFeed?" (F"+doc.gc.tespitFeed+")":""}</span>${inp("g_feed", doc.gc.feed, "Kesim beslemesi")}</div>
+    <div class="ti"><span class="tl">Boşta ${u}/dk</span>${inp("g_rapid", doc.gc.rapidHiz, "Hizli hareket hizi")}</div>
+    <div class="ti"><span class="tl">Dalış ${u}/dk</span>${inp("g_dalis", doc.gc.dalisHiz, "Dalis beslemesi")}</div>
+    <div class="ti sure"><span class="tl">Tahmini süre</span><b>${_sureStr(m.dk)}</b></div>`;
+  const bagla = (id, alan, anahtar) => { const e = $(id); if (!e) return;
+    e.onchange = () => { doc.gc[alan] = parseFloat(e.value) || 0; AYAR.yaz(anahtar, doc.gc[alan]); gcInfoCiz(doc); }; };
+  bagla("g_feed", "feed", "gcFeed");
+  bagla("g_rapid", "rapidHiz", "gcRapid");
+  bagla("g_dalis", "dalisHiz", "gcDalis");
 }
 
 // boşta-yol karsilastirma cipleri (en iyi vurgulanir, tiklayinca uygular)
@@ -598,7 +703,7 @@ async function gcCiz(doc, zorla) {
   if (doc.gc.tabAcik) await gcTablariGetir(doc);   // sira ile hizali tut
   const dv = await api("/api/gcode/dogrula", { yol: doc.yol, sira: doc.gc.sira });
   const ihl = new Set(); (dv.ihlaller || []).forEach(([a, b]) => { ihl.add(a); ihl.add(b); });
-  gcListe(doc, ihl); gcSvg(doc);
+  gcListe(doc, ihl); gcSvg(doc); gcGrupCiz(doc); gcInfoCiz(doc);
   const d = $("g_durum"); if (!d) return;
   d.innerHTML = (dv.ihlaller && dv.ihlaller.length)
     ? `<span class="uyari">${dv.ihlaller.length} icerme ihlali — kirmizi bloklar ic parca disindan sonra kesiliyor. 'Auto' ile duzeltin.</span>`
@@ -620,7 +725,17 @@ function gcSecimTik(doc, poz, e) {
   } else {
     sec.clear(); sec.add(id); doc.gc.capa = id;
   }
-  gcListe(doc, doc.gc._ihl || new Set());
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc);
+}
+
+// Sira numarasini elle duzenle: blok yeni pozisyona (1-tabanli) tasinir.
+function gcNoDuzenle(doc, poz, yeniDeger) {
+  const n = doc.gc.sira.length;
+  let h = parseInt(yeniDeger, 10);
+  if (isNaN(h)) return;
+  h = Math.max(1, Math.min(n, h)) - 1;
+  if (h === poz) return;
+  gcTasi(doc, poz, h);
 }
 
 // Secili bloklari (goreli sirayi koruyarak) hedef pozisyona TOPLU tasir.
@@ -648,16 +763,26 @@ function gcListe(doc, ihl) {
     const dRozet = delta === 0 ? `<span class="delta ayni">•</span>`
       : delta > 0 ? `<span class="delta yukari">▲${delta}</span>`
       : `<span class="delta asagi">▼${-delta}</span>`;
+    const kesimStr = b.kesim_uz != null ? ` · ${b.kesim_uz.toFixed(0)}${doc.veri.birim||""}` : "";
     const d = document.createElement("div");
     d.className = "blok" + (ihl.has(poz + 1) ? " ihlal" : "") + (sec.has(id) ? " secili" : "");
     d.draggable = true;
-    d.innerHTML = `<div class="no">${poz + 1}</div>
-      <div><div class="bx">X ${b.x.toFixed(1)}  Y ${b.y.toFixed(1)} ${dRozet}</div>
-      <div class="by">orijinal #${oPoz + 1} · derinlik ${b.derinlik} · ${b.satir} satir</div></div>
-      <div class="etk ${b.derinlik>0?'ic':''}">${b.derinlik>0?'ic ('+b.derinlik+')':'dis'}</div>`;
+    d.innerHTML = `<input class="no no-duz" value="${poz + 1}" title="Sıra no — yaz+Enter"
+        inputmode="numeric">
+      <div class="bveri"><div class="bx">X ${b.x.toFixed(1)}  Y ${b.y.toFixed(1)} ${dRozet}</div>
+      <div class="by">orijinal #${oPoz + 1} · derinlik ${b.derinlik} · ${b.satir} satir${kesimStr}</div></div>
+      <div class="etk ${b.derinlik>0?'ic':''}">${b.derinlik>0?'ic ('+b.derinlik+')':'dis'}</div>
+      <button class="blok-sil" title="Bu bloğu sil">×</button>`;
+    const noInp = d.querySelector(".no-duz");
+    noInp.onclick = e => e.stopPropagation();
+    noInp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); gcNoDuzenle(doc, poz, noInp.value); }
+      else if (e.key === "Escape") noInp.value = poz + 1; };
+    noInp.onblur = () => { if (noInp.value != poz + 1) gcNoDuzenle(doc, poz, noInp.value); };
+    d.querySelector(".blok-sil").onclick = e => { e.stopPropagation();
+      doc.gc.secim = new Set([id]); gcSecSil(doc); };
     d.onclick = e => gcSecimTik(doc, poz, e);
     d.ondragstart = e => {
-      if (!sec.has(id)) { sec.clear(); sec.add(id); doc.gc.capa = id; gcListe(doc, ihl); }
+      if (!sec.has(id)) { sec.clear(); sec.add(id); doc.gc.capa = id; gcListe(doc, ihl); gcGrupCiz(doc); }
       e.dataTransfer.setData("k", poz); d.classList.add("suru");
     };
     d.ondragend = () => d.classList.remove("suru");

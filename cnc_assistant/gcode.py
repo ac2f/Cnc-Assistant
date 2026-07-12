@@ -326,6 +326,85 @@ def toplam_bosta_yol(bloklar):
     return toplam
 
 
+def blok_kesim_uzunlugu(blok, yay_bolut=14):
+    """Bloktaki KESIM (G1/G2/G3 besleme) XY hareketlerinin arc-duyarli toplam
+    uzunlugu. G0 (hizli) hareketler HARIC -> gercek talas alinan yol."""
+    x = y = None
+    g = None
+    toplam = 0.0
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if not ("X" in w or "Y" in w):
+            continue
+        nx = w.get("X", x if x is not None else 0.0)
+        ny = w.get("Y", y if y is not None else 0.0)
+        if x is None or y is None:
+            x, y = nx, ny
+            continue
+        if g in (1.0, 2.0, 3.0):
+            if g in (2.0, 3.0) and ("I" in w or "J" in w or "R" in w):
+                pts = _yay_noktalari(x, y, nx, ny, w, g, yay_bolut)
+                for i in range(1, len(pts)):
+                    toplam += math.hypot(pts[i][0] - pts[i - 1][0],
+                                         pts[i][1] - pts[i - 1][1])
+            else:
+                toplam += math.hypot(nx - x, ny - y)
+        x, y = nx, ny
+    return toplam
+
+
+def blok_dalis_uzunlugu(blok):
+    """Bloktaki ASAGI yonlu Z besleme (dalis/plunge) mesafesi toplami (G1 Z).
+    Ilk dalis, bloktaki EN YUKSEK Z'den (geri-cekme yuksekligi) baslar kabul
+    edilir -> plunge onceki bloktaki geri-cekme yuksekliginden inse bile sayilir."""
+    _, zmax = blok_z_araligi(blok)
+    z = zmax                       # geri-cekme yuksekliginden basla
+    g = None
+    toplam = 0.0
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if "Z" in w:
+            nz = w["Z"]
+            if z is not None and g == 1.0 and nz < z:
+                toplam += (z - nz)
+            z = nz
+    return toplam
+
+
+def blok_z_araligi(blok):
+    """Bloktaki en dusuk/en yuksek Z (kesim derinligi araligi)."""
+    zs = []
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "Z" in w:
+            zs.append(w["Z"])
+    return (min(zs), max(zs)) if zs else (None, None)
+
+
+def kesim_feed_tespit(satirlar):
+    """Kesim (G1/G2/G3) sirasinda en cok kullanilan F (besleme, birim/dk)
+    degerini doner; yoksa None. Modal F takip edilir."""
+    from collections import Counter
+    g = None
+    feed = None
+    feedler = []
+    for s in satirlar:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if "F" in w:
+            feed = w["F"]
+        if g in (1.0, 2.0, 3.0) and feed and ("X" in w or "Y" in w or "Z" in w):
+            feedler.append(feed)
+    if feedler:
+        return Counter(feedler).most_common(1)[0][0]
+    return feed
+
+
 # ----------------------------------------------------------------------
 # Siralama stratejileri
 # ----------------------------------------------------------------------
