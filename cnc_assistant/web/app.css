@@ -199,7 +199,16 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .blok:last-child{border-bottom:none}
 .blok:hover{background:var(--cizgi)}
 .blok.suru{opacity:.4}
+.blok.secili{background:color-mix(in srgb,var(--acc) 20%,transparent);
+  box-shadow:inset 3px 0 0 var(--acc)}
+.blok.secili .no{border-color:var(--acc);color:var(--acc)}
 .blok.ihlal{background:color-mix(in srgb,var(--uyari) 14%,transparent)}
+.delta{font-size:10.5px;font-weight:700;margin-left:5px;vertical-align:middle}
+.delta.yukari{color:#34c759} .delta.asagi{color:var(--amber)} .delta.ayni{color:var(--metin2)}
+.kat-lej{font-size:11px;font-weight:400;color:var(--metin2);margin-left:8px}
+.kat-lej i{display:inline-block;width:16px;height:0;border-top:2px solid var(--acc);
+  margin:0 4px 3px 10px;vertical-align:middle}
+.kat-lej i.l-eski{border-top:2px dashed #8e8e93}
 .blok .no{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
   font-weight:700;background:var(--yuzey);border:1px solid var(--cizgi);flex:none;font-size:13px}
 .blok .bx{font-size:13px} .blok .by{font-size:11.5px;color:var(--metin2)}
