@@ -174,13 +174,13 @@ def _eslestir_kalanlar(orijinal, sade, tol=1e-9):
 def cember_baslangic_kaydir(circle, msp):
     """CIRCLE baslangic noktasi tasimaz; CAM kendi secer. Kontrol icin cember,
     matematiksel olarak birebir ayni iki 180 derecelik yaydan (bulge=1.0)
-    olusan kapali LWPOLYLINE ile degistirilir. Baslangic: sol-ust 135 derece."""
+    olusan kapali LWPOLYLINE ile degistirilir. Baslangic: SAG-UST 45 derece."""
     cx, cy = circle.dxf.center.x, circle.dxf.center.y
     r = circle.dxf.radius
     k = r / math.sqrt(2.0)
     pl = msp.add_lwpolyline(
-        [(cx - k, cy + k, 0.0, 0.0, 1.0),
-         (cx + k, cy - k, 0.0, 0.0, 1.0)],
+        [(cx + k, cy + k, 0.0, 0.0, 1.0),
+         (cx - k, cy - k, 0.0, 0.0, 1.0)],
         format="xyseb",
         dxfattribs={
             "layer": circle.dxf.layer,

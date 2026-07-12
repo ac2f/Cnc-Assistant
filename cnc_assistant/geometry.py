@@ -606,6 +606,29 @@ def ayakli_dusey_govde_mi(pts, w, h,
     return taban >= taban_orani * w and 0 < govde <= govde_orani * w
 
 
+def dairesel_mi(pts, w, h, esik=0.90):
+    """Parca DAIRESEL (daire / yuvarlak) mi? Cevrelestirme orani
+    4*pi*alan / cevre^2 ~ 1 ve en-boy ~ 1 ise dairesel sayilir. Bu parcalarin
+    baslangici SAG-UST (45 derece) tarafa kaydirilmali."""
+    if w <= 1e-9 or h <= 1e-9:
+        return False
+    if min(w, h) / max(w, h) < 0.75:      # cok basik/uzun -> daire degil
+        return False
+    A = 0.0
+    P = 0.0
+    n = len(pts)
+    for i in range(n):
+        x1, y1 = pts[i][0], pts[i][1]
+        x2, y2 = pts[(i + 1) % n][0], pts[(i + 1) % n][1]
+        A += x1 * y2 - x2 * y1
+        P += math.hypot(x2 - x1, y2 - y1)
+    A = abs(A) / 2.0
+    if P <= 1e-9:
+        return False
+    # Yaylar (bulge) kiris ile olculur -> cevre biraz kucuk cikar; toleransli.
+    return (4.0 * math.pi * A / (P * P)) >= esik
+
+
 def ust_kosular(pts, ythr, w):
     """Parcanin ust bant (y >= ythr) icindeki GERCEK ust kontur parcalarini
     (X araliklari) doner: [(x_sol, x_sag), ...]. Duz ve yay segmentleri ele
@@ -683,6 +706,13 @@ def _baslangic_hedef_nokta(pts, **kw):
 
     d = kw.get("destek_yonu", DESTEK_YONU)
     dx = d[0] if d else -1.0
+
+    # 0) Dairesel (daire / yuvarlak) parca -> baslangic SAG-UST (45 derece):
+    #    kontur uzerinde x+y'si en buyuk nokta. (Duz kesimde sag-uste yakin
+    #    lead-in; CAM disi kontrolde de tutarli.)
+    if kw.get("dairesel_sag_ust", True) and dairesel_mi(pts, w, h):
+        tpt = max(pts, key=lambda p: p[0] + p[1])
+        return (tpt[0], tpt[1], None, True, uzun_ince)
 
     # 1) Dikey ince serit / "I" -> sag kontur, sag-orta/sag-alt. Serit tespiti
     #    boyunca AZAMI yatay kalinliga bakar (serifli "I" de yakalanir).
