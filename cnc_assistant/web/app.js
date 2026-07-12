@@ -209,7 +209,8 @@ async function yukle(doc) {
   if (doc.tur === "dxf") {
     const p = doc.params;
     doc.veri = await api("/api/dxf/onizle", { yol: doc.yol,
-      destek_yonu: p.destek, node_tol: p.node_tol, node_temizle: p.node_temiz });
+      destek_yonu: p.destek, node_tol: p.node_tol, node_temizle: p.node_temiz,
+      referans_dxf: p.referans || "" });
     if (!doc.veri.hata)
       onizEkle(doc, `${p.destek} · ${p.node_temiz ? "temiz" : "ham"}`);
   } else {
@@ -278,6 +279,9 @@ function dxfIcerik(doc) {
           <input type="text" class="alan kk" id="d_tol" value="${p.node_tol}"></div>
         <label class="anahtar"><input type="checkbox" id="d_temiz" ${p.node_temiz?"checked":""}>
           <span class="kutu"></span> Node temizligi</label>
+        <div class="grup"><label>Referans DXF (elle-duzeltilmis · istege bagli)</label>
+          <input type="text" class="alan" id="d_referans" placeholder="/yol/duzeltmeler.dxf"
+                 value="${p.referans||""}" style="width:210px"></div>
         <div style="flex:1"></div>
         <button class="dugme hayalet" id="d_ayarAc">Onizleme ayarlari ▾</button>
         <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
@@ -348,6 +352,7 @@ function dxfIcerik(doc) {
     $("d_destek").onchange = e => { p.destek = e.target.value; kaydetP(); yukle(doc); };
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
+    $("d_referans").onchange = e => { p.referans = e.target.value.trim(); kaydetP(); yukle(doc); };
     $("d_yeniden").onclick = () => yukle(doc);
     // --- Onizleme ayarlari (kalici: localStorage 'onizAyar') ---
     const oz = onizAyarAl();
@@ -374,7 +379,8 @@ function dxfIcerik(doc) {
       const o = onizAyarAl();
       $("d_durum").innerHTML = `<span class="yukleniyor"></span> Onizleme uretiliyor…`;
       const r = await api("/api/dxf/onizleme", { yol: doc.yol, destek_yonu: p.destek,
-        node_tol: p.node_tol, node_temizle: p.node_temiz, paneller: panel, format: o.format,
+        node_tol: p.node_tol, node_temizle: p.node_temiz, referans_dxf: p.referans || "",
+        paneller: panel, format: o.format,
         stil: { cizgi_kalinlik: o.cizgi_kalinlik, vektor_renk: o.vektor_renk,
           riskli_renk: o.riskli_renk, bas_renk: o.bas_renk, bas_boyut: o.bas_boyut,
           numara: o.numara, numara_boyut: o.numara_boyut, izgara: o.izgara } });

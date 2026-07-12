@@ -17,6 +17,7 @@ yalnizca vertex SIRASINI / SAYISINI degistirir, sekli degil.
 """
 
 import math
+import os
 
 import ezdxf
 from ezdxf import bbox as _ezbbox
@@ -190,6 +191,161 @@ def cember_baslangic_kaydir(circle, msp):
         })
     msp.delete_entity(circle)
     return pl
+
+
+# ----------------------------------------------------------------------
+# REFERANS (elle-duzeltilmis) baslangic uygulama
+# ----------------------------------------------------------------------
+# Bazi karmasik/serpme (dusuk-doluluk) parcalarda baslangicin nereye konacagi
+# tek bir geometrik kurala sigmayan, gercek CNC yargisi gerektiren bir seçimdir.
+# Bunun icin kullanici o parcalari elle duzeltip (baslangic noktasi istenen
+# yere alinmis) bir "referans" DXF gonderir; bu modul referanstaki her parcayi
+# hedef dosyadaki AYNI parca ile (boyut + konum; ayna/otele donusum otomatik
+# cozulur) eslestirir ve baslangici referanstaki noktaya tasir. Boylece bu
+# ozel secimler algoritmanin KALICI, tekrar-kullanilabilir parcasi olur.
+
+def _ref_parcalar(yol):
+    """Referans DXF'teki kapali parcalari (baslangic + bbox/merkez/boyut)
+    okur. SPLINE (flatten), LWPOLYLINE ve 2D POLYLINE desteklenir."""
+    doc = ezdxf.readfile(yol)
+    parcalar = []
+    for e in doc.modelspace():
+        t = e.dxftype()
+        if t == "SPLINE":
+            pts = [(p.x, p.y) for p in e.flattening(0.3)]
+        elif t == "LWPOLYLINE":
+            pts = [(p[0], p[1]) for p in e.get_points("xy")]
+        elif t == "POLYLINE":
+            pts = [(v.dxf.location.x, v.dxf.location.y) for v in e.vertices]
+        else:
+            continue
+        if len(pts) < 3:
+            continue
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        parcalar.append({
+            "start": pts[0],
+            "cx": (min(xs) + max(xs)) / 2, "cy": (min(ys) + max(ys)) / 2,
+            "w": round(max(xs) - min(xs), 1), "h": round(max(ys) - min(ys), 1)})
+    return parcalar
+
+
+def _hedef_lw_parcalar(msp):
+    hedef = []
+    for e in msp:
+        if e.dxftype() != "LWPOLYLINE":
+            continue
+        pts = [tuple(p) for p in e.get_points("xyseb")]
+        if len(pts) < 3:
+            continue
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        hedef.append({
+            "e": e, "pts": pts,
+            "cx": (min(xs) + max(xs)) / 2, "cy": (min(ys) + max(ys)) / 2,
+            "w": round(max(xs) - min(xs), 1), "h": round(max(ys) - min(ys), 1)})
+    return hedef
+
+
+def _ref_donusum(ref, hedef):
+    """Referans -> hedef koordinat donusumunu (ayna sx,sy + otele ax,ay) boyut-
+    eslesmeli ciftlerin oyuyla cozer. Doner: (sx, sy, ax, ay, oy_sayisi)."""
+    from collections import Counter
+
+    def adaylar(r):
+        return [h for h in hedef
+                if abs(h["w"] - r["w"]) < 1.5 and abs(h["h"] - r["h"]) < 1.5]
+    en_iyi = None
+    for sx in (1, -1):
+        for sy in (1, -1):
+            oylar = Counter()
+            for r in ref:
+                for h in adaylar(r):
+                    ax = round(h["cx"] - sx * r["cx"])
+                    ay = round(h["cy"] - sy * r["cy"])
+                    oylar[(ax // 5 * 5, ay // 5 * 5)] += 1
+            if oylar:
+                (ax, ay), c = oylar.most_common(1)[0]
+                if en_iyi is None or c > en_iyi[-1]:
+                    en_iyi = (sx, sy, float(ax), float(ay), c)
+    return en_iyi
+
+
+def _lw_baslangici_tasi(pl, hedef_xy):
+    """LWPOLYLINE baslangicini kontur uzerinde `hedef_xy`ye en yakin noktaya
+    tasir (gerekirse duz segmente node ekler; sekil korunur)."""
+    fmt = "xyseb"
+    pts = [tuple(p) for p in pl.get_points(fmt)]
+    # Coincident (ilk==son nokta) ile kapatilmis polyline'da son kopya noktayi
+    # cikar; rotasyon sonrasi tekrar kapat -> kapali kontur bozulmasin.
+    acik_kapali = False
+    if not pl.closed and len(pts) >= 2 and \
+       math.hypot(pts[0][0] - pts[-1][0], pts[0][1] - pts[-1][1]) < 1e-9:
+        pts = pts[:-1]
+        acik_kapali = True
+    n = len(pts)
+    if n < 3:
+        return False
+    tx, ty = hedef_xy
+    en = None
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        if abs(a[4]) > 1e-9:               # yay segmenti: bolme (yayi bozma)
+            dseg = min((a[0] - tx) ** 2 + (a[1] - ty) ** 2,
+                       (b[0] - tx) ** 2 + (b[1] - ty) ** 2)
+            cand = (dseg, i, 0.0 if dseg == (a[0] - tx) ** 2 + (a[1] - ty) ** 2
+                    else 1.0, a[0], a[1])
+        else:
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            L2 = dx * dx + dy * dy
+            t = 0.0 if L2 < 1e-12 else max(0.0, min(1.0,
+                ((tx - a[0]) * dx + (ty - a[1]) * dy) / L2))
+            px, py = a[0] + t * dx, a[1] + t * dy
+            cand = ((px - tx) ** 2 + (py - ty) ** 2, i, t, px, py)
+        if en is None or cand[0] < en[0]:
+            en = cand
+    _d2, si, t, px, py = en
+    seq = list(pts)
+    if t < 1e-4:
+        i0 = si
+    elif t > 1 - 1e-4:
+        i0 = (si + 1) % len(seq)
+    else:
+        seq.insert(si + 1, (px, py, 0.0, 0.0, 0.0)); i0 = si + 1
+    seq = seq[i0:] + seq[:i0]
+    if acik_kapali:                    # coincident kapaniti geri koy
+        seq = seq + [seq[0]]
+    pl.set_points(seq, format=fmt)
+    return True
+
+
+def referans_baslangic_uygula(msp, referans_yol, tol_mm=30.0):
+    """Referans DXF'teki elle-duzeltilmis baslangiclari hedef modelspace'e
+    uygular. Doner: uygulanan parca sayisi."""
+    ref = _ref_parcalar(referans_yol)
+    hedef = _hedef_lw_parcalar(msp)
+    if not ref or not hedef:
+        return 0
+    don = _ref_donusum(ref, hedef)
+    if don is None:
+        return 0
+    sx, sy, ax, ay, _oy = don
+
+    def T(x, y):
+        return (sx * x + ax, sy * y + ay)
+
+    uygulanan = 0
+    for r in ref:
+        tcx, tcy = T(r["cx"], r["cy"])
+        adaylar = [h for h in hedef
+                   if abs(h["w"] - r["w"]) < 1.5 and abs(h["h"] - r["h"]) < 1.5]
+        havuz = adaylar or hedef
+        h = min(havuz, key=lambda h: (h["cx"] - tcx) ** 2 + (h["cy"] - tcy) ** 2)
+        if math.hypot(h["cx"] - tcx, h["cy"] - tcy) > tol_mm:
+            continue
+        if _lw_baslangici_tasi(h["e"], T(*r["start"])):
+            uygulanan += 1
+    print(f"[Referans] Elle-duzeltilmis baslangic uygulanan parca: {uygulanan}"
+          f" (donusum ayna=({sx},{sy}))")
+    return uygulanan
 
 
 # ----------------------------------------------------------------------
@@ -372,6 +528,14 @@ def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
         opts.setdefault("tabaka_h", _gen.extmax.y - _gen.extmin.y)
     opts.setdefault("boyut_orani", boyut_orani)
     stats = adim1_baslangic_optimizasyonu(msp, opts)
+    # Istege bagli: elle-duzeltilmis referans baslangiclari uygula (karmasik
+    # parcalarda tek geometrik kurala sigmayan CNC secimleri kalicilastirir).
+    ref_yol = opts.get("referans_dxf")
+    if ref_yol and os.path.isfile(ref_yol):
+        try:
+            stats["referans_uygulanan"] = referans_baslangic_uygula(msp, ref_yol)
+        except Exception as _e:      # referans hatasi optimizasyonu bozmasin
+            print(f"[Referans] Uygulanamadi: {_e}")
     print("-" * 62)
     riskli = adim2_riskli_parca_uyarisi(msp, alan_orani, boyut_orani)
     lb, bb = _metrikler(doc)
