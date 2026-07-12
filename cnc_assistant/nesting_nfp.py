@@ -20,6 +20,7 @@ ve raster motoruna donulur.
 
 import math
 import random
+import time
 
 try:
     import pyclipper
@@ -69,6 +70,60 @@ def _bbox(poly):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def _dp_basitlestir(poly, tol):
+    """Douglas-Peucker ile poligonu sadelestirir (kapali kontur). Cok noktali
+    spline parcalarini ~onlarca noktaya indirger -> NFP/IFP cok daha hizli.
+    tol: sapma toleransi (mm)."""
+    n = len(poly)
+    if n <= 4 or tol <= 0:
+        return list(poly)
+
+    def _seg(pts):
+        if len(pts) < 3:
+            return list(pts)
+        x0, y0 = pts[0]; x1, y1 = pts[-1]
+        dx, dy = x1 - x0, y1 - y0
+        uz = math.hypot(dx, dy) or 1e-9
+        enb, idx = -1.0, -1
+        for i in range(1, len(pts) - 1):
+            px, py = pts[i]
+            d = abs((px - x0) * dy - (py - y0) * dx) / uz
+            if d > enb:
+                enb, idx = d, i
+        if enb <= tol:
+            return [pts[0], pts[-1]]
+        sol = _seg(pts[:idx + 1])
+        sag = _seg(pts[idx:])
+        return sol[:-1] + sag
+
+    # Kapali konturu, ilk noktadan EN UZAK noktada iki zincire bol; her zinciri
+    # ayri sadelestir (kapali kontur DP; taban segmenti asla dejenere olmaz).
+    x0, y0 = poly[0]
+    far = max(range(n), key=lambda i: (poly[i][0] - x0) ** 2 + (poly[i][1] - y0) ** 2)
+    if far == 0:
+        return list(poly)
+    ust = _seg(poly[:far + 1])            # poly[0..far]
+    alt = _seg(poly[far:] + [poly[0]])    # poly[far..n-1..0]
+    sade = ust[:-1] + alt[:-1]            # far ve kapanis noktasi tekrar etmesin
+    return sade if len(sade) >= 3 else list(poly)
+
+
+def _normalize_parcalar(parcalar, tol):
+    """Her parcayi bbox-min'i orijine gelecek sekilde otelenir (buyuk mutlak
+    koordinatlari kucultur -> clipper sayisal olarak saglam) ve hesaplama icin
+    sadelestirilmis bir kopya (_c) uretir. Cikti (poly) tam cozunurlukte kalir."""
+    out = []
+    for p in parcalar:
+        poly = p["poly"]
+        x0, y0, _, _ = _bbox(poly)
+        norm = [(x - x0, y - y0) for x, y in poly]
+        q = dict(p)
+        q["poly"] = norm
+        q["_c"] = _dp_basitlestir(norm, tol)
+        out.append(q)
+    return out
+
+
 def _oteleme(path_c, dx, dy):
     return [[x + dx, y + dy] for x, y in path_c]
 
@@ -86,15 +141,28 @@ def _nfp(A_c, B_c):
     return max(sol, key=_alan)
 
 
+def _dik_mi(c):
+    """Clipper path eksen-hizali dikdortgen mi? Oyleyse (x0,y0,x1,y1) doner."""
+    xs = sorted(set(int(round(x)) for x, y in c))
+    ys = sorted(set(int(round(y)) for x, y in c))
+    if len(xs) == 2 and len(ys) == 2:
+        return (xs[0], ys[0], xs[1], ys[1])
+    return None
+
+
 def _ifp(C_c, P_c):
     """Inner-Fit (referans t bolgesi): P'nin C icinde kalmasi icin P'nin HER
     vertex'i C icinde olmali -> IFP = ∩_v (C − v).  Konveks konteyner+parcada
     KESIN; konkav konteynerde 'guvenli' alt kume (disari tasmaz). Konkav kenar
     durumlari icin secilen konum ayrica birebir dogrulanir (_icinde)."""
-    res = [C_c]
+    # IFP = ∩_v (C − v).  DIKKAT: baslangica C_c EKLENMEZ; parca orijinden uzak
+    # (buyuk mutlak koordinat) oldugunda t bolgesi konteynerin KENDI konumunda
+    # degildir -> C ile kesistirmek IFP'yi yanlislikla bosaltir (0 yerlesim hatasi).
+    res = None
     for vx, vy in P_c:
         trans = [[x - vx, y - vy] for x, y in C_c]
-        res = _clip(res, [trans], pyclipper.CT_INTERSECTION)
+        res = [trans] if res is None else _clip(res, [trans],
+                                                pyclipper.CT_INTERSECTION)
         if not res:
             return []
     return res
@@ -117,7 +185,17 @@ class _Motor:
         self._rot_c = {}      # (pi, aci) -> clipper poly (sisirilmis, referans min-koseli)
         self._nfp_c = {}      # (pi,ai,pj,aj) -> nfp
         self._ifp_c = {}      # (ti,pi,ai) -> ifp
-        self._tab_c = [_to_c(self._sisir_tabaka(t["poly"])) for t in tabakalar]
+        self._tab_c = []
+        self._tab_rect = []   # eksen-hizali dikdortgen tabaka -> (x0,y0,x1,y1) clipper
+        for t in tabakalar:
+            sis = self._sisir_tabaka(t["poly"])
+            c = _to_c(sis)
+            self._tab_c.append(c)
+            self._tab_rect.append(_dik_mi(c))
+
+    def _cpoly(self, pi):
+        p = self.ptip[pi]
+        return p.get("_c") or p["poly"]
 
     def _sisir_tabaka(self, poly):
         # kenar boslugu: konteyneri iceri daralt (clipper offset)
@@ -134,7 +212,7 @@ class _Motor:
         k = (pi, aci)
         if k in self._rot_c:
             return self._rot_c[k]
-        rp = _dondur(self.ptip[pi]["poly"], aci)
+        rp = _dondur(self._cpoly(pi), aci)
         # parca-parca aciklik: parcayi aciklik/2 sisir (clipper offset)
         c = _to_c(rp)
         if self.aciklik > 0:
@@ -154,9 +232,21 @@ class _Motor:
 
     def ifp(self, ti, pj, aj):
         k = (ti, pj, aj)
-        if k not in self._ifp_c:
-            self._ifp_c[k] = _ifp(self._tab_c[ti], self.rot_c(pj, aj))
-        return self._ifp_c[k]
+        if k in self._ifp_c:
+            return self._ifp_c[k]
+        rect = self._tab_rect[ti]
+        if rect is not None:
+            # Dikdortgen tabaka -> IFP analitik (O(1); 141-vertex ∩ yerine).
+            X0, Y0, X1, Y1 = rect
+            px0, py0, px1, py1 = _bbox(self.rot_c(pj, aj))
+            ax0, ax1 = X0 - px0, X1 - px1
+            ay0, ay1 = Y0 - py0, Y1 - py1
+            res = [] if (ax1 < ax0 or ay1 < ay0) else \
+                [[[ax0, ay0], [ax1, ay0], [ax1, ay1], [ax0, ay1]]]
+        else:
+            res = _ifp(self._tab_c[ti], self.rot_c(pj, aj))
+        self._ifp_c[k] = res
+        return res
 
     def yerlestir(self, sira):
         """sira: [(pi, aci)...]. Bottom-left NFP yerlesim, coklu tabaka."""
@@ -197,23 +287,37 @@ class _Motor:
         ifp = self.ifp(ti, pi, aci)
         if not ifp:
             return None
+        rect = self._tab_rect[ti]
+        # IFP bbox -> uzaktaki NFP'leri (etkisiz) ele (buyuk hizlanma).
+        ifx0 = min(x for p in ifp for x, _ in p)
+        ifx1 = max(x for p in ifp for x, _ in p)
+        ify0 = min(y for p in ifp for _, y in p)
+        ify1 = max(y for p in ifp for _, y in p)
         # feasible = IFP - union(NFP(yerlesmis, P) + t_yerlesmis)
         yasak = []
         for (qi, qa, qx, qy, _) in yerlesmisler:
             n = self.nfp(qi, qa, pi, aci)
-            if n:
-                yasak.append(_oteleme(n, qx, qy))
+            if not n:
+                continue
+            nt = _oteleme(n, qx, qy)
+            nx0 = min(x for x, _ in nt); nx1 = max(x for x, _ in nt)
+            ny0 = min(y for _, y in nt); ny1 = max(y for _, y in nt)
+            if nx1 < ifx0 or nx0 > ifx1 or ny1 < ify0 or ny0 > ify1:
+                continue          # IFP ile ortusmuyor -> yasak degil
+            yasak.append(nt)
         feas = _clip(ifp, yasak, pyclipper.CT_DIFFERENCE) if yasak else ifp
         if not feas:
             return None
-        # yerlesmislerin birlesimi (cakisma dogrulamasi icin)
+        adaylar = sorted({(x, y) for path in feas for x, y in path},
+                         key=lambda p: (p[1], p[0]))
+        if rect is not None:
+            # Dikdortgen konteyner + kesin NFP -> feasible noktalari ZATEN
+            # gecerli (icerde + cakismasiz). Sol-alt aday dogrudan secilir.
+            return adaylar[0] if adaylar else None
+        # Konkav konteyner: adaylari birebir dogrula (icerde + cakismasiz).
         birlesim = None
         if yerlesmisler:
             birlesim = _clip([w[4] for w in yerlesmisler], [], pyclipper.CT_UNION)
-        # aday koseler, sol-alt sirali; ilk BIREBIR gecerli olani sec:
-        # (a) konteyner icinde  (b) yerlesmislerle cakismiyor.
-        adaylar = sorted({(x, y) for path in feas for x, y in path},
-                         key=lambda p: (p[1], p[0]))
         C_c = self._tab_c[ti]
         P_c = self.rot_c(pi, aci)
         for (x, y) in adaylar[:400]:
@@ -253,6 +357,8 @@ def _ga_nest(parcalar, tabakalar, ayar):
 
     pop = int(ayar.get("populasyon", 12))
     nesil = int(ayar.get("nesil", 8))
+    sure_limiti = float(ayar.get("sure_limiti", 25.0))    # saniye (butce)
+    t_bas = time.time()
     rnd = random.Random(int(ayar.get("tohum", 42)))
 
     # alan azalan baslangic bireyi (iyi tohum)
@@ -264,21 +370,26 @@ def _ga_nest(parcalar, tabakalar, ayar):
     def rastgele_aci():
         return rot[rnd.randrange(len(rot))]
 
-    def birey_uret(sirali=False):
+    def birey_uret(sirali=False, tek_aci=False):
         idx = list(taban) if sirali else rnd.sample(range(n), n)
-        aci = [rastgele_aci() for _ in range(n)]
+        # tek_aci: tohum bireyi tek rotasyon kullanir -> gen0 yalniz o rotasyonun
+        # NFP'lerini hesaplar (hizli, tam ve gecerli bir baslangic yerlesimi).
+        aci = [rot[0]] * n if tek_aci else [rastgele_aci() for _ in range(n)]
         return {"idx": idx, "aci": aci}
 
     def uygula(birey):
         sira = [(ornekler[i], birey["aci"][i]) for i in birey["idx"]]
         return motor.yerlestir(sira)
 
-    # baslangic populasyonu
-    bireyler = [birey_uret(sirali=True)] + [birey_uret() for _ in range(pop - 1)]
+    # baslangic populasyonu (zaman butcesi burada da gecerli: ilk yerlestirme
+    # tum NFP'leri hesaplar; butce dolduysa elde olanla devam et)
+    bireyler = [birey_uret(sirali=True, tek_aci=True)] + \
+        [birey_uret() for _ in range(pop - 1)]
     degerli = []
     for b in bireyler:
-        r = uygula(b)
-        degerli.append((b, r))
+        degerli.append((b, uygula(b)))
+        if time.time() - t_bas > sure_limiti:
+            break
     degerli.sort(key=lambda br: br[1]["skor"], reverse=True)
     en_iyi = degerli[0]
 
@@ -306,6 +417,8 @@ def _ga_nest(parcalar, tabakalar, ayar):
 
     elit = max(1, pop // 5)
     for _ in range(nesil - 1):
+        if time.time() - t_bas > sure_limiti:     # zaman butcesi doldu -> en iyiyi don
+            break
         yeni = [degerli[k][0] for k in range(elit)]     # elitizm
         while len(yeni) < pop:
             p1 = _turnuva(degerli, rnd)
@@ -314,6 +427,8 @@ def _ga_nest(parcalar, tabakalar, ayar):
         degerli = []
         for b in yeni:
             degerli.append((b, uygula(b)))
+            if time.time() - t_bas > sure_limiti:
+                break
         degerli.sort(key=lambda br: br[1]["skor"], reverse=True)
         if degerli[0][1]["skor"] > en_iyi[1]["skor"]:
             en_iyi = degerli[0]
@@ -334,7 +449,10 @@ def nfp_nest(parcalar, tabakalar, ayar):
     doner)."""
     if not _VAR:
         return None
-    sonuc = _ga_nest(parcalar, tabakalar, ayar)
+    # Performans: parcalari orijine otele + sadelestir (141-vertex spline -> ~25).
+    tol = float(ayar.get("basitlestir_tol", 0.5))
+    parts = _normalize_parcalar(parcalar, tol)
+    sonuc = _ga_nest(parts, tabakalar, ayar)
     sonuc["hucre"] = 0
     sonuc["motor"] = "nfp"
     return sonuc

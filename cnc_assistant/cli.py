@@ -113,6 +113,32 @@ def kurulum_parser():
                       help="G-Code icin etkilesimli (canli) siralama editorunu ac")
     g_gc.add_argument("--canli-onizleme", action="store_true",
                       help="Etkilesimli modda PNG onizlemeyi basta ACIK baslat")
+
+    g_nest = ap.add_argument_group("Nesting (dizme) secenekleri")
+    g_nest.add_argument("--nest", action="store_true",
+                        help="Verilen DXF('ler)deki parcalari tabakaya dizer "
+                             "(nesting) ve *_nested.dxf yazar")
+    g_nest.add_argument("--tabaka", default="1500x3000",
+                        help="Tabaka olcusu mm: 'ENxBOY' (orn 1500x3000)")
+    g_nest.add_argument("--tabaka-adet", type=int, default=10,
+                        help="Kullanilabilir tabaka sayisi")
+    g_nest.add_argument("--nest-motor", choices=("raster", "nfp", "raf"),
+                        default="raster",
+                        help="Dizme algoritmasi: raster (gercek-sekil, hizli), "
+                             "nfp (NFP+genetik, pyclipper), raf (shelf/hizli)")
+    g_nest.add_argument("--nest-kenar", type=float, default=15.0,
+                        help="Tabaka kenar boslugu (mm)")
+    g_nest.add_argument("--nest-kerf", type=float, default=4.0,
+                        help="Bicak payi / kerf (mm)")
+    g_nest.add_argument("--nest-bosluk", type=float, default=0.1,
+                        help="Parcalar arasi ek bosluk payi (mm)")
+    g_nest.add_argument("--nest-aci", default="0,90",
+                        help="Denenecek rotasyonlar (derece, virgulle): orn '0,90'")
+    g_nest.add_argument("--nest-oncelik", choices=("x", "y"), default="y",
+                        help="Dizme onceligi: 'y' (alt satirlar once) veya "
+                             "'x' (sol sutunlar once)")
+    g_nest.add_argument("--nest-sure", type=float, default=25.0,
+                        help="NFP genetik icin zaman butcesi (saniye)")
     return ap
 
 
@@ -135,12 +161,110 @@ def klasor_isle(klasor, args):
     proje.klasor_isle(klasor, onizleme=not args.onizleme_yok)
 
 
+def _nest_parcalar(yol):
+    """DXF'teki kapali konturlari nesting parcasi olarak dondurur."""
+    doc = ezdxf.readfile(yol)
+    parcalar = []
+    for i, v in enumerate(D.baslangic_noktalari_ve_konturlar(doc)):
+        pts = v["kontur"]
+        if len(pts) < 3:
+            continue
+        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
+        if max(xs) - min(xs) < 1e-6 or max(ys) - min(ys) < 1e-6:
+            continue
+        parcalar.append({"id": f"{os.path.basename(yol)}#{i}", "poly": pts,
+                         "adet": 1})
+    return parcalar
+
+
+def _nest_dxf_yaz(cikti, tabakalar, yerlesim):
+    """Tabakalari yan yana, yerlesmis parcalari uzerlerine yazar (*_nested.dxf)."""
+    doc = ezdxf.new("R2010")
+    msp = doc.modelspace()
+    ofsx = 0.0
+    tab_ofset = []
+    for t in tabakalar:
+        xs = [p[0] for p in t["poly"]]; ys = [p[1] for p in t["poly"]]
+        x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+        tab_ofset.append((ofsx - x0, -y0))
+        msp.add_lwpolyline([(x + ofsx - x0, y - y0) for x, y in t["poly"]],
+                           close=True, dxfattribs={"layer": "TABAKA"})
+        ofsx += (x1 - x0) + max((x1 - x0), (y1 - y0)) * 0.05 + 10
+    for y in yerlesim:
+        dx, dy = tab_ofset[y.get("tabaka", 0)] if tab_ofset else (0.0, 0.0)
+        msp.add_lwpolyline([(x + dx, y2 + dy) for x, y2 in y["poly"]],
+                           close=True, dxfattribs={"layer": "PARCA"})
+    doc.saveas(cikti)
+
+
+def nest_isle(yollar, args):
+    from . import nesting as NEST
+    from . import nesting_nfp as NEST_NFP
+    try:
+        W, H = (float(v) for v in args.tabaka.lower().split("x"))
+    except Exception:
+        print(f"Hata: --tabaka 'ENxBOY' olmali (orn 1500x3000), verilen: {args.tabaka}")
+        return
+    aci = [float(a) for a in str(args.nest_aci).split(",") if a.strip() != ""] or [0]
+    kok = os.path.splitext(yollar[0])[0]
+
+    # RAF (shelf): gercek doc uzerinde bbox-raf paketleme (nest_doc).
+    if args.nest_motor == "raf":
+        doc = ezdxf.readfile(yollar[0])
+        r = NEST.nest_doc(doc, tabaka_genislik=W,
+                          bosluk=args.nest_kerf + args.nest_bosluk,
+                          kenar=args.nest_kenar)
+        cikti = f"{kok}_nested.dxf"
+        doc.saveas(cikti)
+        print(f"Nesting (raf/shelf): {r.get('parca_sayisi')} parca -> tabaka eni "
+              f"{W:.0f} mm · cikti: {cikti}")
+        return
+
+    parcalar = []
+    for yol in yollar:
+        if os.path.isfile(yol) and yol.lower().endswith(".dxf"):
+            parcalar += _nest_parcalar(yol)
+    if not parcalar:
+        print("Hata: DXF('ler)de dizilecek kapali parca bulunamadi.")
+        return
+    tabakalar = [{"poly": [[0, 0], [W, 0], [W, H], [0, H]]}
+                 for _ in range(max(1, args.tabaka_adet))]
+    ayar = {"kenar": args.nest_kenar, "kerf": args.nest_kerf,
+            "bosluk": args.nest_bosluk, "rotasyonlar": aci,
+            "oncelik": args.nest_oncelik, "motor": args.nest_motor,
+            "sure_limiti": args.nest_sure}
+    print(f"Nesting: {len(parcalar)} parca -> {W:.0f}x{H:.0f} mm tabaka · "
+          f"motor={args.nest_motor} · kenar={args.nest_kenar} kerf={args.nest_kerf} "
+          f"bosluk={args.nest_bosluk} · aci={aci} · oncelik={args.nest_oncelik}")
+    if args.nest_motor == "nfp":
+        r = NEST_NFP.nfp_nest(parcalar, tabakalar, ayar)
+        if r is None:
+            print("  pyclipper kurulu degil -> raster motoruna dusuldu "
+                  "(NFP icin: pip install pyclipper)")
+            r = NEST.raster_nest(parcalar, tabakalar, ayar)
+    else:
+        r = NEST.raster_nest(parcalar, tabakalar, ayar)
+    yer = r.get("yerlesim", [])
+    sigmayan = sum(x["adet"] for x in r.get("yerlesmeyen", []))
+    cikti = f"{kok}_nested.dxf"
+    _nest_dxf_yaz(cikti, tabakalar, yer)
+    print(f"  Yerlesen: {len(yer)}/{len(parcalar)} · sigmayan: {sigmayan} · "
+          f"doluluk: {r.get('doluluk')} · cikti: {cikti}")
+
+
 def main(argv=None):
     args = kurulum_parser().parse_args(argv)
 
     if args.web:
         from . import webapp
         webapp.calistir(port=args.port, ac=args.tarayici_ac)
+        return
+
+    if args.nest:
+        if not args.dosyalar:
+            print("Hata: --nest icin en az bir DXF dosyasi verin.")
+            return
+        nest_isle(args.dosyalar, args)
         return
 
     if not args.dosyalar:

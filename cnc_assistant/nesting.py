@@ -286,6 +286,13 @@ def raster_nest(parcalar, tabakalar, ayar):
             x0, y0, x1, y1 = _poly_bbox_pts(t["poly"])
             en_buyuk = max(en_buyuk, x1 - x0, y1 - y0)
         hucre = max(en_buyuk / 350.0, 0.3)
+    # Guvenlik: cok ince cozunurluk sistemi kilitler. Tabaka basina hucre
+    # sayisini bir ust sinirla tut (gerekiyorsa hucreyi buyut).
+    _AZAMI_HUCRE = 300000
+    for t in tabakalar:
+        x0, y0, x1, y1 = _poly_bbox_pts(t["poly"])
+        while ((x1 - x0) / hucre) * ((y1 - y0) / hucre) > _AZAMI_HUCRE:
+            hucre *= 1.3
 
     parca_yari = (kerf + bosluk) / 2.0        # parca-parca aciklik yarisi
     r_dilate = max(0, int(round(parca_yari / hucre)))
@@ -337,6 +344,11 @@ def raster_nest(parcalar, tabakalar, ayar):
         onbellek[anahtar] = (tm, im, tm.shape[0], tm.shape[1], ox, oy)
         return onbellek[anahtar]
 
+    # Dizilme onceligi: "y" (varsayilan) -> alt satirlar once dolar (parcalar
+    # once X boyunca yatay dizilir, sonra Y'de yukari); "x" -> sol sutunlar once
+    # dolar (parcalar once Y boyunca dikey dizilir, sonra X'te saga).
+    oncelik = str(ayar.get("oncelik", "y")).lower()
+
     def _pack(sira):
         """Verilen sira ile tek bir yerlestirme uygular. skor -> daha yuksek iyi:
         (yerlesen_adet, -kullanilan_tabaka, toplam_doluluk)."""
@@ -346,7 +358,7 @@ def raster_nest(parcalar, tabakalar, ayar):
         for o in sira:
             kondu = False
             for ti, s in enumerate(tab_statik):
-                sec = None
+                sec = None; sec_ak = None
                 occf = occ[ti].astype(_np.float64)
                 for aci in rotasyonlar:
                     tm, im, kh, kw, rminx, rminy = maske_al(o["id"], o["poly"], aci)
@@ -360,10 +372,14 @@ def raster_nest(parcalar, tabakalar, ayar):
                     idx = _np.argwhere(uy)
                     if idx.size == 0:
                         continue
-                    p = idx[_np.lexsort((idx[:, 1], idx[:, 0]))][0]
+                    if oncelik == "x":       # sol sutun once (j birincil)
+                        p = idx[_np.lexsort((idx[:, 0], idx[:, 1]))][0]
+                    else:                    # alt satir once (i birincil)
+                        p = idx[_np.lexsort((idx[:, 1], idx[:, 0]))][0]
                     i, j = int(p[0]), int(p[1])
-                    if sec is None or (i, j) < (sec[0], sec[1]):
-                        sec = (i, j, aci, tm, im, kh, kw, rminx, rminy)
+                    ak = (j, i) if oncelik == "x" else (i, j)
+                    if sec is None or ak < sec_ak:
+                        sec = (i, j, aci, tm, im, kh, kw, rminx, rminy); sec_ak = ak
                 if sec is None:
                     continue
                 i, j, aci, tm, im, kh, kw, rminx, rminy = sec

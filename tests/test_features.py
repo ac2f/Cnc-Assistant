@@ -75,6 +75,54 @@ def test_nesting_cakismasiz_ve_cevre_korur():
     assert cak == 0
 
 
+def _kutu(x, y, w, h):
+    return [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+
+
+def test_raster_nest_uzak_koordinat_ve_oncelik():
+    # Parcalar ORIJINDEN UZAK (buyuk mutlak koordinat) olsa da yerlesmeli;
+    # X/Y onceligi yerlesimi farkli eksende yaymali.
+    parcalar = [{"id": f"p{i}", "poly": _kutu(-5000 + i, -8000, 100, 60), "adet": 1}
+                for i in range(8)]
+    tab = [{"poly": _kutu(0, 0, 1500, 3000)}]
+    ay = {"kenar": 15, "kerf": 4, "bosluk": 0.1, "rotasyonlar": [0, 90]}
+    ry = nesting.raster_nest(parcalar, tab, dict(ay, oncelik="y"))
+    rx = nesting.raster_nest(parcalar, tab, dict(ay, oncelik="x"))
+    assert len(ry["yerlesim"]) == 8 and len(rx["yerlesim"]) == 8
+    yay = lambda r, k: (max(sum(p[k] for p in y["poly"]) / len(y["poly"])
+                           for y in r["yerlesim"])
+                        - min(sum(p[k] for p in y["poly"]) / len(y["poly"])
+                              for y in r["yerlesim"]))
+    # Y onceligi -> X'te daha genis yayilim; X onceligi -> Y'de daha genis.
+    assert yay(ry, 0) > yay(ry, 1)
+    assert yay(rx, 1) > yay(rx, 0)
+
+
+def test_nfp_nest_uzak_koordinat_yerlesir():
+    # Regresyon: parcalar orijinden uzakken IFP yanlislikla bosalip 0 yerlesim
+    # vermemeli (analitik dik IFP + normalize). pyclipper yoksa test atlanir.
+    from cnc_assistant import nesting_nfp as NFP
+    if not NFP.kullanilabilir():
+        return
+    parcalar = [{"id": f"p{i}", "poly": _kutu(20000, 20000 + i, 120, 80), "adet": 1}
+                for i in range(6)]
+    tab = [{"poly": _kutu(0, 0, 1500, 3000)}]
+    r = NFP.nfp_nest(parcalar, tab, {"kenar": 15, "kerf": 4, "bosluk": 0.1,
+                                     "rotasyonlar": [0, 90], "populasyon": 4,
+                                     "nesil": 2, "sure_limiti": 15})
+    assert r is not None
+    assert len(r["yerlesim"]) == 6      # onceden 0 (hata) idi
+
+
+def test_dp_basitlestir_nokta_azaltir():
+    from cnc_assistant import nesting_nfp as NFP
+    # cok noktali (yaklasik daire) kontur -> DP ile onemli olcude azalmali
+    poly = [(50 + 50 * math.cos(t), 50 + 50 * math.sin(t))
+            for t in [i * 2 * math.pi / 120 for i in range(120)]]
+    sade = NFP._dp_basitlestir(poly, 1.0)
+    assert 3 <= len(sade) < len(poly)
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0
