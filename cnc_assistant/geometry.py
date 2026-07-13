@@ -79,6 +79,13 @@ TACK_TABAN_ORANI = 0.75    # alt %22 bandinda azami yatay kalinlik / genislik >=
 TACK_GOVDE_ORANI = 0.55    # ust govdede (y %55-%95) medyan kalinlik / genislik <= bu
 TACK_Y_ORANI = 0.40        # baslangic yuksekligi (alttan, bbox orani)
 
+# "Yorumlanan vektor" destek stratejisi: baslangic, ince bir CIKINTI/ledge
+# uzerine (altinda az malzeme) denk gelmemeli -> kesimde desteksiz kalip
+# kirilmasin. Baslangicin bulundugu X'te ust konturdan asagi SUREKLI malzeme
+# derinligi bu oranin (yukseklige gore) altindaysa nokta "desteksiz" sayilir ve
+# ayni ust bantta daha destekli bir X'e/bolgeye kaydirilir.
+MIN_DESTEK_DERINLIK_ORANI = 0.20
+
 # Ust bolge secimi: en genis (en destekli) ust bolge tercih edilir; birden cok
 # bolge bu oranin ustunde genislikteyse destek yonundeki (sol) secilir. Boylece
 # sivri tepe (orn. yan yatik "A"nin ucu) yerine genis/duz ust kenar secilir.
@@ -98,11 +105,13 @@ BASLANGIC_KABUL_TOL = 0.02
 UST_Y_AGIRLIK = 0.10
 
 # DESTEK/BASLANGIC YONU (dx, dy). Yalnizca YATAY isaret (dx) kullanilir:
-# dx>0 -> SAG-UST (varsayilan), dx<0 -> sol-ust, dx~0 -> orta-ust. Dikey serit
+# dx<0 -> SOL-UST (varsayilan), dx>0 -> sag-ust, dx~0 -> orta-ust. Dikey serit
 # parcalarda ayni isaret hangi yan kenarin secilecegini belirler.
-# KURAL: Baslangic, vektorun PROGRAMA GELDIGI cerceve'de daima SAG-UST
-# referans alinarak yerlestirilir (kesim sirasi sag-ust dominant ilerler).
-DESTEK_YONU = (1.0, 1.0)
+# NOT: Varsayilan SOL-UST'tur; web ve CLI de "sol-ust" varsayar (motor
+# varsayilaniyla tutarli). Baslangic tarafi kalici bir GLOBAL ayardir
+# (makine/is-akisi yonelimine gore bir kez secilir); tum sekil kurallarini
+# (dikdortgen, serit, raptiye, I-kiris) tutarli olarak ayni tarafa alir.
+DESTEK_YONU = (-1.0, 1.0)
 
 # Yon-projeksiyonu primitifi (destek_ucu_indeks) icin "en uc" bandi.
 DESTEK_BANT_ORANI = 0.02
@@ -682,6 +691,39 @@ def ust_kosular(pts, ythr, w):
     return [(a, b) for a, b in merged]
 
 
+def _dikey_destek_derinlik(pts, X):
+    """X dik dogrusunda, parcanin EN UST konturundan asagi dogru SUREKLI malzeme
+    (dolgu) derinligini doner. Kucuk deger -> baslangic ince bir cikinti/ledge
+    uzerinde, kesimde desteksiz. Duz ve yay segmentleri ele alinir."""
+    ys = []
+    n = len(pts)
+    for i in range(n):
+        p1, p2 = pts[i], pts[(i + 1) % n]
+        x1, y1, x2, y2 = p1[0], p1[1], p2[0], p2[1]
+        if abs(p1[4]) < 1e-12:
+            if abs(x2 - x1) < 1e-12:
+                continue
+            if (x1 - X) * (x2 - X) <= 0:
+                t = (X - x1) / (x2 - x1)
+                ys.append(y1 + t * (y2 - y1))
+        else:
+            prm = _yay_parametreleri(p1, p2)
+            if prm is None:
+                continue
+            cx, cy, r, a1, a2, ccw = prm
+            dx = X - cx
+            if abs(dx) <= r:
+                yy = math.sqrt(max(r * r - dx * dx, 0.0))
+                for y in (cy + yy, cy - yy):
+                    a = math.atan2(y - cy, dx)
+                    if _aci_arada(a, a1, a2, ccw):
+                        ys.append(y)
+    if len(ys) < 2:
+        return 0.0
+    ys.sort()
+    return ys[-1] - ys[-2]      # en ust malzeme araliginin kalinligi
+
+
 def _baslangic_hedef_nokta(pts, **kw):
     """Baslangicin idealde OLMASI gereken noktayi (parcanin GERCEK konturu
     uzerinde) ve konturdaki segmentini doner.
@@ -787,12 +829,46 @@ def _baslangic_hedef_nokta(pts, **kw):
         # elenir, boylece gercek ust kenar tercih edilir.
         min_run = kw.get("min_kose_orani", MIN_KOSE_ORANI) * w
         genis = [r for r in kosular if (r[1] - r[0]) >= min_run] or kosular
-        a, b = (max(genis, key=lambda ab: ab[1]) if dx > 0.05
-                else min(genis, key=lambda ab: ab[0]))
+        # "Yorumlanan vektor" destek stratejisi: ince bir cikinti/ledge (altinda
+        # az malzeme) uzerine baslangic koymamak icin, yeterince DESTEKLI ust
+        # bolgeler tercih edilir. Bir bolgenin destegi, ic noktalarindaki azami
+        # dikey malzeme derinligidir.
+        destek_esik = kw.get("min_destek_orani", MIN_DESTEK_DERINLIK_ORANI) * h
+
+        def _bolge_destek(rr):
+            aa, bb = rr
+            en = 0.0
+            for k in range(1, 6):
+                d = _dikey_destek_derinlik(pts, aa + (bb - aa) * k / 6.0)
+                if d > en:
+                    en = d
+            return en
+
+        destekli = [r for r in genis if _bolge_destek(r) >= destek_esik] or genis
+        a, b = (max(destekli, key=lambda ab: ab[1]) if dx > 0.05
+                else min(destekli, key=lambda ab: ab[0]))
         iw = b - a
         kose_payi = min(kw.get("kose_payi_orani", BASLANGIC_KOSE_PAYI) * w, 0.4 * iw)
         tx = a + frac * iw
         tx = max(a + kose_payi, min(tx, b - kose_payi)) if iw > 1e-9 else (a + b) / 2
+        # Secilen X ince destekliyse, bolge icinde destek-tarafina en yakin
+        # YETERINCE destekli X'e kaydir (kesimde desteksiz uc onlenir).
+        if iw > 1e-9 and _dikey_destek_derinlik(pts, tx) < destek_esik:
+            lo, hi = a + kose_payi, b - kose_payi
+            adim = max((hi - lo) / 16.0, 1e-6)
+            en_iyi_x = tx
+            en_iyi_d = _dikey_destek_derinlik(pts, tx)
+            sag = dx > 0.05
+            x = hi if sag else lo
+            while (x >= lo - 1e-9) if sag else (x <= hi + 1e-9):
+                d = _dikey_destek_derinlik(pts, x)
+                if d >= destek_esik:
+                    en_iyi_x = x
+                    break
+                if d > en_iyi_d:
+                    en_iyi_x, en_iyi_d = x, d
+                x += -adim if sag else adim
+            tx = en_iyi_x
 
     r = ust_kontur_y(pts, tx)
     if r is not None:
