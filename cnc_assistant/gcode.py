@@ -486,6 +486,14 @@ def sol_alt_sag_ust_sirala(bloklar):
                 (onculler[j] if dy > eps else onculler[i]).add(
                     i if dy > eps else j)
 
+    # Her blogun GIRIS (bas / lead-in) ve CIKIS (son) noktalari; bloklar arasi
+    # bosta tasima = onceki blok CIKISI -> sonraki blok GIRISI mesafesi.
+    giris = [blok_bas_xy(b) for b in bloklar]
+    cikis = [_blok_son_xy(b, giris[i]) for i, b in enumerate(bloklar)]
+
+    def _uzak(a, b):
+        return math.hypot(cikis[a][0] - giris[b][0], cikis[a][1] - giris[b][1])
+
     # TIE-BREAK: kesime hazir olanlar arasindan takima EN YAKIN olani sec
     # (nearest-neighbor). Baslangic sol-alt kose. Boylece uzun/rastgele Y
     # sicramalari kalkar; destek kisiti zaten alttan-sola -> sag-uste akisi
@@ -496,18 +504,68 @@ def sol_alt_sag_ust_sirala(bloklar):
 
     kalan = set(range(n))
     tamam = set()
-    sonuc = []
+    sira = []
     while kalan:
         hazir = [i for i in kalan if onculler[i] <= tamam]
         if not hazir:                 # (beklenmedik) dongu -> kilitlenmeyi
             hazir = list(kalan)       # onlemek icin en yakini yine de sec
-        sec = min(hazir, key=lambda i: (blok_bas_xy(bloklar[i])[0] - konum[0]) ** 2
-                  + (blok_bas_xy(bloklar[i])[1] - konum[1]) ** 2)
-        sonuc.append(bloklar[sec])
-        konum = _blok_son_xy(bloklar[sec], blok_bas_xy(bloklar[sec]))
+        sec = min(hazir, key=lambda i: (giris[i][0] - konum[0]) ** 2
+                  + (giris[i][1] - konum[1]) ** 2)
+        sira.append(sec)
+        konum = cikis[sec]
         kalan.discard(sec)
         tamam.add(sec)
-    return sonuc
+
+    # ---- YEREL IYILESTIRME (Or-opt): tek parcayi, DESTEK KISITINI bozmadan
+    # daha iyi bir konuma tasi. NN acgozlu birakan uzun 'kurtarma' sicramalari
+    # ve capraz kesismeler boylece azalir. Kisit: parca tum onculleri SONRA,
+    # tum ardillari ONCE olamaz -> yalnizca uygun pencereye tasinir. Travel
+    # yalnizca DUSERSE kabul edilir; ihlal uretmesi matematiksel olarak
+    # imkansizdir (pencere kisiti garanti eder).
+    ardil = [set() for _ in range(n)]
+    for j in range(n):
+        for i in onculler[j]:
+            ardil[i].add(j)
+
+    def _komsu_maliyet(dizi, k):
+        v = dizi[k]
+        o = dizi[k - 1] if k > 0 else None
+        s = dizi[k + 1] if k + 1 < len(dizi) else None
+        e = (_uzak(o, v) if o is not None else 0.0)
+        e += (_uzak(v, s) if s is not None else 0.0)
+        e -= (_uzak(o, s) if (o is not None and s is not None) else 0.0)
+        return e
+
+    gecti = True
+    tur = 0
+    while gecti and tur < 4:
+        gecti = False
+        tur += 1
+        for k in range(len(sira)):
+            v = sira[k]
+            cikar = _komsu_maliyet(sira, k)          # v'yi cikarmanin kazanci
+            kalanlar = sira[:k] + sira[k + 1:]
+            poz = {b: p for p, b in enumerate(kalanlar)}
+            lo = max((poz[u] for u in onculler[v]), default=-1) + 1
+            hi = min((poz[u] for u in ardil[v]), default=len(kalanlar))
+            en_iyi_delta = -1e-9
+            en_iyi_p = None
+            for p in range(lo, hi + 1):
+                o = kalanlar[p - 1] if p > 0 else None
+                s = kalanlar[p] if p < len(kalanlar) else None
+                ekle = (_uzak(o, v) if o is not None else 0.0)
+                ekle += (_uzak(v, s) if s is not None else 0.0)
+                ekle -= (_uzak(o, s) if (o is not None and s is not None) else 0.0)
+                delta = cikar - ekle                 # >0 ise iyilesme
+                if delta > en_iyi_delta:
+                    en_iyi_delta = delta
+                    en_iyi_p = p
+            if en_iyi_p is not None and en_iyi_delta > 1e-6:
+                kalanlar.insert(en_iyi_p, v)
+                sira = kalanlar
+                gecti = True
+
+    return [bloklar[i] for i in sira]
 
 
 def engel_farkindalikli_sirala(bloklar):
