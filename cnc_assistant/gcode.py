@@ -449,42 +449,46 @@ def sol_alt_sag_ust_sirala(bloklar):
     tum_y = [v for b in bboxlar for v in (b[1], b[3])]
     gen_x = (max(tum_x) - min(tum_x)) if tum_x else 0.0
     gen_y = (max(tum_y) - min(tum_y)) if tum_y else 0.0
-    x_tol = max(gen_x * 0.02, 1e-9)
-    y_tol = max(gen_y * 0.02, 1e-9)
+    # "Gercek" ortusme esigi: yalnizca kenardan DEGEN/temas eden parcalar ayni
+    # bant sayilmasin (yoksa dusey yigin, yatay komsu sanilip yanlis siralanir).
+    ort_tol = max(max(gen_x, gen_y) * 1e-3, 1e-9)
     eps = 1e-9
 
-    def _y_ust_uste(i, j):        # Y araliklari cakisiyor mu (yatay komsu)
-        return (min(bboxlar[i][3], bboxlar[j][3])
-                - max(bboxlar[i][1], bboxlar[j][1])) > -y_tol
-
-    def _x_ust_uste(i, j):        # X araliklari cakisiyor mu (dusey komsu)
-        return (min(bboxlar[i][2], bboxlar[j][2])
-                - max(bboxlar[i][0], bboxlar[j][0])) > -x_tol
-
-    # ONCELIK GRAFI. Kenar SADECE gercek komsuluk yonunde konur; boylece
-    # graf DONGUSUZ kalir (yoksa tolerans iki eksende birden cakisma sanip
-    # dongu -> destek ihlali uretiyordu). Bir (i,j) cifti icin ayrilma
-    # HANGI eksende baskinsa o kural uygulanir:
-    #   * baskin eksen X (yatay komsu) -> SOLDAKI once (sag destegi korunur)
-    #   * baskin eksen Y (dusey komsu) -> ALTTAKI once (ust destegi korunur)
-    # Capraz (hicbir eksende cakismayan) parcalar arasinda kisit YOK ->
-    # yol serbestce en yakini secerek pürüzsüz ilerler.
-    onculler = [set() for _ in range(n)]
+    # ONCELIK GRAFI -- IKI KADEMELI (router destek fizigi). Iki parcanin HANGI
+    # eksende GERCEKTEN ortustugune gore komsuluk turu belirlenir:
+    #   * daha cok Y'de ortusuyorlarsa YATAY komsu -> SAG kisiti (BIRINCIL,
+    #     asla feda edilmez): SOLDAKI once kesilir. Malzeme SAGDAN sabit; bir
+    #     parca kesilirken saginda kesilmis bosluk olmamali (kullanici kurali).
+    #   * daha cok X'te ortusuyorlarsa DUSEY komsu -> UST kisiti (IKINCIL):
+    #     ALTTAKI once kesilir (ust destek).
+    # Hicbir eksende gercek ortusme yoksa (capraz) kisit YOK.
+    onc_sag = [set() for _ in range(n)]
+    onc_ust = [set() for _ in range(n)]
     for i in range(n):
+        bi = bboxlar[i]
         for j in range(i + 1, n):
-            dx = merkez[j][0] - merkez[i][0]
-            dy = merkez[j][1] - merkez[i][1]
-            yc = _y_ust_uste(i, j)
-            xc = _x_ust_uste(i, j)
-            if not yc and not xc:
-                continue                       # capraz -> kisit yok
-            yatay = yc if yc != xc else (abs(dx) >= abs(dy))
-            if yatay:                          # yatay komsu: soldaki once
-                (onculler[j] if dx > eps else onculler[i]).add(
-                    i if dx > eps else j)
-            else:                              # dusey komsu: alttaki once
-                (onculler[j] if dy > eps else onculler[i]).add(
-                    i if dy > eps else j)
+            bj = bboxlar[j]
+            yov = min(bi[3], bj[3]) - max(bi[1], bj[1])   # Y ortusme (>0 gercek)
+            xov = min(bi[2], bj[2]) - max(bi[0], bj[0])   # X ortusme (>0 gercek)
+            if yov <= ort_tol and xov <= ort_tol:
+                continue                       # capraz / sadece temas -> kisit yok
+            if yov >= xov:                     # baskin ortusme Y -> YATAY komsu
+                dx = merkez[j][0] - merkez[i][0]
+                if yov > ort_tol and abs(dx) > eps:        # SAG: soldaki once
+                    (onc_sag[j] if dx > eps else onc_sag[i]).add(
+                        i if dx > eps else j)
+                elif xov > ort_tol:                        # (Y sliver) -> UST'e dus
+                    dy = merkez[j][1] - merkez[i][1]
+                    if abs(dy) > eps:
+                        (onc_ust[j] if dy > eps else onc_ust[i]).add(
+                            i if dy > eps else j)
+            elif xov > ort_tol:                # baskin ortusme X -> DUSEY komsu
+                dy = merkez[j][1] - merkez[i][1]
+                if abs(dy) > eps:                          # UST: alttaki once
+                    (onc_ust[j] if dy > eps else onc_ust[i]).add(
+                        i if dy > eps else j)
+
+    onculler = [onc_sag[i] | onc_ust[i] for i in range(n)]
 
     # Her blogun GIRIS (bas / lead-in) ve CIKIS (son) noktalari; bloklar arasi
     # bosta tasima = onceki blok CIKISI -> sonraki blok GIRISI mesafesi.
@@ -506,9 +510,12 @@ def sol_alt_sag_ust_sirala(bloklar):
     tamam = set()
     sira = []
     while kalan:
-        hazir = [i for i in kalan if onculler[i] <= tamam]
-        if not hazir:                 # (beklenmedik) dongu -> kilitlenmeyi
-            hazir = list(kalan)       # onlemek icin en yakini yine de sec
+        # 1) hem SAG hem UST kisiti saglanan parcalar (ideal)
+        hazir = [i for i in kalan if onc_sag[i] <= tamam and onc_ust[i] <= tamam]
+        if not hazir:                 # 2) UST dongusu -> UST'u feda et, SAG'i KORU
+            hazir = [i for i in kalan if onc_sag[i] <= tamam]
+        if not hazir:                 # 3) (cok nadir) SAG bile dongulu -> ilerle
+            hazir = list(kalan)
         sec = min(hazir, key=lambda i: (giris[i][0] - konum[0]) ** 2
                   + (giris[i][1] - konum[1]) ** 2)
         sira.append(sec)
@@ -566,6 +573,83 @@ def sol_alt_sag_ust_sirala(bloklar):
                 gecti = True
 
     return [bloklar[i] for i in sira]
+
+
+def destek_simulasyonu(bloklar, tol_orani=0.02):
+    """ROUTER KESIM SIMULASYONU -- verilen KESIM SIRASINA gore, tabakayi
+    router kesiyormus gibi adim adim ilerletip her parcanin kesildigi anda
+    DESTEKSIZ kalip kalmadigini denetler.
+
+    Fizik modeli (kullanicinin kurali): malzeme AGIRLIKLI olarak SAG ve
+    UST kenardan sabitlenir. Bir parca kesilirken:
+      * SAGINDA (ayni yatay bantta, Y cakismali) daha once kesilmis bir
+        parca varsa -> parca SAGDAN desteksiz kalir (BIRINCIL / kritik).
+      * USTUNDE (ayni dusey seritte, X cakismali, Y'de ayrik) daha once
+        kesilmis parca varsa -> USTTEN desteksiz kalir (ikincil).
+
+    Ic (nested) kesimler kendi dis konturunun icindeki dolu malzeme icinde
+    olduklarindan komsu parcalarin destegini etkilemez; bu yuzden denetim
+    yalnizca DIS konturlar (icerme derinligi 0) arasinda yapilir.
+
+    Doner: ihlal sozlukleri listesi. Her biri:
+      {"parca": Y_sira, "engel": X_sira, "yon": "sag"|"ust",
+       "aciklama": "#X once kesilince #Y sagdan/ustten desteksiz kaliyor"}
+    Bos liste => sira DOGRUDAN kesime girebilir (desteksiz parca yok).
+    Sira degerleri TAM dizideki 1-tabanli konumdur (onizleme numarasiyla ayni).
+    """
+    n = len(bloklar)
+    if n <= 1:
+        return []
+    der = containment_derinlik(bloklar)
+    kutular = [blok_bbox(b) for b in bloklar]
+    olcek = 0.0
+    _tumx = [v for kk in kutular for v in (kk[0], kk[2])]
+    if _tumx:
+        olcek = max(_tumx) - min(_tumx)
+    dejen = max(olcek * 1e-4, 1e-6)                    # sifir-alanli teknik bloklar
+    # dis konturlar (icerme derinligi 0) ve GERCEK govdesi olanlar; nokta/bos
+    # (or. Z-retract'siz sabit son blok) bloklar destek analizine katilmaz.
+    kok = [i for i in range(n) if der[i] == 0
+           and (kutular[i][2] - kutular[i][0] > dejen
+                or kutular[i][3] - kutular[i][1] > dejen)]
+    if len(kok) <= 1:
+        return []
+    bbox = [kutular[i] for i in kok]
+    mz = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in bbox]
+    tx = [v for b in bbox for v in (b[0], b[2])]
+    ty = [v for b in bbox for v in (b[1], b[3])]
+    olc = max(max(tx) - min(tx), max(ty) - min(ty))
+    ort_tol = max(olc * 1e-3, 1e-9)                       # gercek ortusme esigi
+    eps = 1e-9
+    # UST (ikincil) icin 'bitisiklik' esigi: yalnizca hemen USTTE oturan
+    # (kucuk bosluklu) parca gercek bir sarkma yaratir. Uzaktaki yuksek
+    # parcalar SAG destek korundugu surece kritik DEGILDIR.
+    y_bitisik = max((max(ty) - min(ty)) * 0.03, 1e-9)
+
+    ihlaller = []
+    for a in range(len(kok)):            # Y: su an kesilen dis kontur
+        for b in range(a):               # X: daha once kesilmis dis kontur
+            yov = min(bbox[a][3], bbox[b][3]) - max(bbox[a][1], bbox[b][1])
+            xov = min(bbox[a][2], bbox[b][2]) - max(bbox[a][0], bbox[b][0])
+            if yov <= ort_tol and xov <= ort_tol:
+                continue                                  # capraz -> etkilesim yok
+            if yov >= xov and yov > ort_tol:              # YATAY komsu -> SAG denetimi
+                if mz[b][0] > mz[a][0] + eps:             # X, Y'nin SAGINDA, once kesilmis
+                    # KRITIK: sag clamp'e baglanti kesildi -> parca desteksiz.
+                    ihlaller.append({
+                        "parca": kok[a] + 1, "engel": kok[b] + 1,
+                        "yon": "sag", "kritik": True,
+                        "aciklama": f"#{kok[b] + 1} once kesildigi icin "
+                                    f"#{kok[a] + 1} SAGDAN desteksiz kaliyor"})
+            elif xov > ort_tol:                           # DUSEY komsu -> UST denetimi
+                bosluk = bbox[b][1] - bbox[a][3]          # X.alt - Y.ust
+                if mz[b][1] > mz[a][1] + eps and -ort_tol <= bosluk <= y_bitisik:
+                    ihlaller.append({
+                        "parca": kok[a] + 1, "engel": kok[b] + 1,
+                        "yon": "ust", "kritik": False,
+                        "aciklama": f"#{kok[b] + 1} hemen ustte ve once kesildigi "
+                                    f"icin #{kok[a] + 1} ust destegi zayifliyor"})
+    return ihlaller
 
 
 def engel_farkindalikli_sirala(bloklar):
@@ -766,6 +850,12 @@ class GCodeProgram:
         mod = "serpantin" if serpantin else "engel" if engel else "sol-alt"
         self.bloklar = sirala(self.bloklar, mod)
 
+    def destek_denetimi(self):
+        """Mevcut kesim sirasini ROUTER gibi simule edip desteksiz kalan
+        parcalari doner (bkz. destek_simulasyonu). Bos liste => dosya
+        dogrudan kesime girebilir; hicbir parca desteksiz kalmaz."""
+        return destek_simulasyonu(self.sirali_bloklar())
+
     def derinlikler(self):
         """Mevcut blok sirasindaki icerme derinlikleri."""
         return containment_derinlik(self.bloklar)
@@ -875,5 +965,21 @@ def yeniden_sirala_dosya(yol, serpantin=False, engel=False):
         fark = (1 - sonraki / onceki) * 100
         print(f"[Adim 3] Bosta tasima mesafesi: {onceki:.1f} -> {sonraki:.1f} "
               f"({fark:+.1f}%)")
+
+    # DESTEK DENETIMI (router simulasyonu): dosya kesime hazir mi?
+    rapor = prog.destek_denetimi()
+    kritik = [r for r in rapor if r["kritik"]]
+    if kritik:
+        print(f"[Adim 3] !! UYARI: {len(kritik)} parca desteksiz kaliyor "
+              f"(dosya KESIME HAZIR DEGIL):")
+        for r in kritik[:10]:
+            print(f"    - {r['aciklama']}")
+    else:
+        print("[Adim 3] DESTEK DENETIMI: TEMIZ - hicbir parca desteksiz "
+              "kalmiyor, dosya dogrudan kesime girebilir.")
+        ust = [r for r in rapor if not r["kritik"]]
+        if ust:
+            print(f"[Adim 3] (Bilgi: {len(ust)} ikincil ust-destek uyarisi; "
+                  "sag destek korundugu icin kritik degil.)")
     print(f"[Adim 3] Cikti dosyasi: {cikti}")
     return cikti

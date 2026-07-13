@@ -191,6 +191,66 @@ def test_destek_sirasi_sag_ust_korunur():
     assert blok_bbox(sirali[0])[:2] == (0.0, 0.0)
 
 
+def test_destek_simulasyonu_temiz():
+    """destek_simulasyonu, guvenli bir siralamada KRITIK ihlal dondurmemeli;
+    bozuk bir siralamada ise ihlali yakalamali."""
+    from cnc_assistant.gcode import sirala, destek_simulasyonu
+    # yan yana iki parca: sag olan once kesilirse sol desteksiz kalir
+    sol = _kare_blok(0, 0, 40, 40)
+    sag = _kare_blok(100, 0, 140, 40)
+    guvenli = sirala([sol, sag], "sol-alt")     # sol once
+    assert not [r for r in destek_simulasyonu(guvenli) if r["kritik"]]
+    # elle boz: sag'i basa al -> sol SAGDAN desteksiz
+    bozuk = [sag, sol]
+    krit = [r for r in destek_simulasyonu(bozuk) if r["kritik"]]
+    assert krit and krit[0]["yon"] == "sag"
+
+
+def test_destek_dinamik_stres():
+    """Cesitli rasgele yerlesimlerde (izgara, dagynik, dusey yigin, yatay
+    sira) siralama SONRASI hicbir parca desteksiz (KRITIK) kalmamali."""
+    import random
+    from cnc_assistant.gcode import sirala, destek_simulasyonu
+
+    def rnd(seed, tur):
+        random.seed(seed)
+        p = []
+        if tur == "izgara":
+            for i in range(random.randint(3, 6)):
+                for j in range(random.randint(3, 6)):
+                    x = j * 100 + random.uniform(0, 15)
+                    y = i * 100 + random.uniform(0, 15)
+                    p.append(_kare_blok(x, y, x + random.uniform(20, 70),
+                                        y + random.uniform(20, 70)))
+        elif tur == "dagynik":
+            for _ in range(random.randint(10, 30)):
+                x = random.uniform(0, 800); y = random.uniform(0, 800)
+                p.append(_kare_blok(x, y, x + random.uniform(15, 80),
+                                    y + random.uniform(15, 80)))
+        elif tur == "yigin":                        # dusey yigin (temas eden)
+            for c in range(random.randint(2, 5)):
+                x = c * 120.0; y = 0.0
+                for _ in range(random.randint(2, 5)):
+                    h = random.uniform(30, 80)
+                    p.append(_kare_blok(x, y, x + random.uniform(40, 90), y + h))
+                    y += h
+        else:                                       # yatay sira (temas eden)
+            for r in range(random.randint(2, 5)):
+                y = r * 120.0; x = 0.0
+                for _ in range(random.randint(2, 5)):
+                    w = random.uniform(30, 80)
+                    p.append(_kare_blok(x, y, x + w, y + random.uniform(40, 90)))
+                    x += w
+        random.shuffle(p)
+        return p
+
+    for tur in ("izgara", "dagynik", "yigin", "sira"):
+        for s in range(25):
+            srt = sirala(rnd(s, tur), "sol-alt")
+            krit = [r for r in destek_simulasyonu(srt) if r["kritik"]]
+            assert not krit, f"KRITIK ihlal: {tur}/{s}: {krit[:2]}"
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0

@@ -369,7 +369,13 @@ def api_gcode_dogrula(veri):
     yol = veri["yol"]
     if yol not in _DURUM:
         return {"hata": "Once dosyayi yukleyin."}
-    return {"ihlaller": _ihlaller(yol, veri["sira"])}
+    d = _DURUM[yol]
+    d["prog"].bloklar = [d["orijinal"][i] for i in veri["sira"]]
+    rapor = d["prog"].destek_denetimi()      # router destek simulasyonu
+    return {"ihlaller": d["prog"].icerme_ihlalleri(),
+            "destek": rapor,
+            "destek_kritik": sum(1 for r in rapor if r["kritik"]),
+            "destek_uyari": sum(1 for r in rapor if not r["kritik"])}
 
 
 def api_gcode_kaydet(veri):

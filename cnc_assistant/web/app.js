@@ -756,11 +756,23 @@ async function gcCiz(doc, zorla) {
   if (doc.gc.tabAcik) await gcTablariGetir(doc);   // sira ile hizali tut
   const dv = await api("/api/gcode/dogrula", { yol: doc.yol, sira: doc.gc.sira });
   const ihl = new Set(); (dv.ihlaller || []).forEach(([a, b]) => { ihl.add(a); ihl.add(b); });
+  // Router destek simulasyonu: desteksiz kalan parcalari da kirmizi vurgula.
+  const destek = dv.destek || [];
+  destek.filter(r => r.kritik).forEach(r => ihl.add(r.parca));
+  doc.gc._destek = destek;
   gcListe(doc, ihl); gcSvg(doc); gcGrupCiz(doc); gcInfoCiz(doc);
   const d = $("g_durum"); if (!d) return;
-  d.innerHTML = (dv.ihlaller && dv.ihlaller.length)
-    ? `<span class="uyari">${dv.ihlaller.length} icerme ihlali — kirmizi bloklar ic parca disindan sonra kesiliyor. 'Auto' ile duzeltin.</span>`
+  const icerme = (dv.ihlaller && dv.ihlaller.length)
+    ? `<span class="uyari">${dv.ihlaller.length} icerme ihlali — 'Auto' ile duzeltin.</span>`
     : `<span class="ok">Icerme kurali saglaniyor: en icteki once kesiliyor.</span>`;
+  const kritik = dv.destek_kritik || 0;
+  const uyari = dv.destek_uyari || 0;
+  const dstk = kritik
+    ? `<span class="uyari">⚠ ${kritik} parca DESTEKSIZ kaliyor — dosya kesime HAZIR DEGIL: `
+      + destek.filter(r => r.kritik).slice(0, 6).map(r => r.aciklama).join("; ") + `</span>`
+    : `<span class="ok">✓ Destek denetimi TEMIZ — hicbir parca desteksiz kalmiyor, dosya kesime hazir.`
+      + (uyari ? ` <span class="not">(${uyari} ikincil ust-uyari, kritik degil)</span>` : "") + `</span>`;
+  d.innerHTML = icerme + "<br>" + dstk;
 }
 const blokById = (doc, id) => doc.gc.bloklar.find(b => b.id === id);
 
