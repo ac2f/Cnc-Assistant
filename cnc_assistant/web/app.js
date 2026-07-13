@@ -225,7 +225,10 @@ async function yukle(doc) {
       dalisHiz: AYAR.al("gcDalis", 300),
       tespitFeed: g.tespit_feed || null,
       tabAcik: AYAR.al("tabAcik", false), tabAdet: AYAR.al("tabAdet", 4),
-      tablar: null };
+      tablar: null,
+      stil: AYAR.al("gcStil", { dis: "#1f77b4", ic: "#e6455a", ok: "#0a84ff",
+        numara: "#111", bas: "#34c759", opak: 1.0, cizgi: 1.4, nboyut: 11 }),
+      goster: AYAR.al("gcGoster", { ic: true, dis: true }) };
   }
   doc.durum = "hazir";
   if (AKTIF === doc.id) render();
@@ -483,6 +486,7 @@ function gcodeIcerik(doc) {
       </div>
       <div class="cipler" id="g_karsilastir"></div>
       <div class="gc-info" id="g_info"></div>
+      <div class="gc-stil" id="g_stilbar"></div>
       <div class="gc-govde">
         <div>
           <div class="pbaslik" style="margin-bottom:8px">Kesim sirasi — surukle · Shift=aralik · Ctrl=coklu</div>
@@ -490,7 +494,7 @@ function gcodeIcerik(doc) {
           <div class="liste" id="g_liste"></div>
         </div>
         <div>
-          <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — numara=sira, ok=tasima
+          <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — çift tık: soldaki menü · Ctrl+tık: seç
             <span class="kat-lej"><i class="l-yeni"></i>düzenlenmiş<i class="l-eski"></i>orijinal</span></div>
           <svg class="tuval" id="svgGc"></svg>
           <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
@@ -519,9 +523,58 @@ function gcodeIcerik(doc) {
     gcGecmisCiz(doc);
     gcGrupCiz(doc);
     gcInfoCiz(doc);
+    gcStilBar(doc);
     gcCiz(doc, true);
   }, 0);
   return el;
+}
+
+// ---- Onizleme stili + goster/gizle + indir cubugu ----
+function gcStilBar(doc) {
+  const kap = $("g_stilbar"); if (!kap) return;
+  const s = doc.gc.stil, go = doc.gc.goster;
+  const renk = (id, val, ttl) => `<label class="st-renk" title="${ttl}">${ttl}
+    <input type="color" id="${id}" value="${val}"></label>`;
+  kap.innerHTML = `
+    <label class="anahtar"><input type="checkbox" id="gs_dis" ${go.dis?"checked":""}>
+      <span class="kutu"></span> Dış kesim</label>
+    <label class="anahtar"><input type="checkbox" id="gs_ic" ${go.ic?"checked":""}>
+      <span class="kutu"></span> İç kesim</label>
+    <span class="ayrac"></span>
+    ${renk("gs_rdis", s.dis, "Dış")}
+    ${renk("gs_ric", s.ic, "İç")}
+    ${renk("gs_rok", s.ok, "Taşıma")}
+    ${renk("gs_rnum", s.numara, "No")}
+    <label class="st-say" title="Opaklık">Opak
+      <input type="range" id="gs_opak" min="0.2" max="1" step="0.05" value="${s.opak}"></label>
+    <label class="st-say" title="Çizgi">Çizgi
+      <input type="number" id="gs_cizgi" min="0.5" max="6" step="0.1" value="${s.cizgi}" style="width:56px"></label>
+    <label class="st-say" title="No boyutu">No
+      <input type="number" id="gs_nboyut" min="6" max="28" step="1" value="${s.nboyut}" style="width:52px"></label>
+    <div style="flex:1"></div>
+    <button class="dugme hayalet kucuk" id="gs_indir_svg">Önizleme indir (SVG)</button>
+    <button class="dugme hayalet kucuk" id="gs_indir_png">PNG</button>`;
+  const yaz = () => { AYAR.yaz("gcStil", doc.gc.stil); AYAR.yaz("gcGoster", doc.gc.goster); };
+  const baglaRenk = (id, k) => { const e = $(id); if (e) e.oninput = () => { doc.gc.stil[k] = e.value; yaz(); gcSvg(doc); }; };
+  baglaRenk("gs_rdis", "dis"); baglaRenk("gs_ric", "ic");
+  baglaRenk("gs_rok", "ok"); baglaRenk("gs_rnum", "numara");
+  $("gs_opak").oninput = e => { doc.gc.stil.opak = +e.target.value; yaz(); gcSvg(doc); };
+  $("gs_cizgi").oninput = e => { doc.gc.stil.cizgi = +e.target.value; yaz(); gcSvg(doc); };
+  $("gs_nboyut").oninput = e => { doc.gc.stil.nboyut = +e.target.value; yaz(); gcSvg(doc); };
+  $("gs_dis").onchange = e => { doc.gc.goster.dis = e.target.checked; yaz(); gcSvg(doc); gcListe(doc, doc.gc._ihl||new Set()); };
+  $("gs_ic").onchange = e => { doc.gc.goster.ic = e.target.checked; yaz(); gcSvg(doc); gcListe(doc, doc.gc._ihl||new Set()); };
+  $("gs_indir_svg").onclick = () => gcOnizlemeIndir(doc, "svg");
+  $("gs_indir_png").onclick = () => gcOnizlemeIndir(doc, "png");
+}
+
+// blogun ic mi (derinlik>0) yoksa dis mi oldugu
+const gcIc = (doc, id) => (blokById(doc, id) || {}).derinlik > 0;
+// goster filtresine gore sira icindeki gorunur id'ler
+function gcGorunurSira(doc) {
+  return doc.gc.sira.filter(id => {
+    const ic = gcIc(doc, id);
+    return ic ? doc.gc.goster.ic : doc.gc.goster.dis;
+  });
 }
 
 // ---- Grup/duzenleme araclari (secime gore) ----
@@ -752,6 +805,21 @@ function gcGrupTasi(doc, hedefPoz) {
   gcAdimEkle(doc, yeni, `taşı ×${secliIdler.length}→${hedefPoz + 1}`);
 }
 
+// Satir icin mini onizleme: o blogun kesim konturu, kucuk kutuya merkezli.
+function gcMiniSvg(doc, b) {
+  const B = 48;
+  const svg = document.createElementNS(SVGNS, "svg");
+  svg.setAttribute("class", "mini-svg"); svg.setAttribute("viewBox", `0 0 ${B} ${B}`);
+  const pts = komutKoords(b.komut || []);
+  if (pts.length >= 2) {
+    const T = fitDonusum(tumBbox([pts]), B, B, 6);
+    ekle(svg, "path", { d: komutYol(b.komut, T), fill: "none",
+      stroke: (b.derinlik > 0 ? doc.gc.stil.ic : doc.gc.stil.dis),
+      "stroke-width": 1.2, "vector-effect": "non-scaling-stroke" });
+  }
+  return svg;
+}
+
 function gcListe(doc, ihl) {
   doc.gc._ihl = ihl;
   const kap = $("g_liste"); if (!kap) return; kap.innerHTML = "";
@@ -764,15 +832,19 @@ function gcListe(doc, ihl) {
       : delta > 0 ? `<span class="delta yukari">▲${delta}</span>`
       : `<span class="delta asagi">▼${-delta}</span>`;
     const kesimStr = b.kesim_uz != null ? ` · ${b.kesim_uz.toFixed(0)}${doc.veri.birim||""}` : "";
+    const gizli = (b.derinlik > 0 ? !doc.gc.goster.ic : !doc.gc.goster.dis);
     const d = document.createElement("div");
-    d.className = "blok" + (ihl.has(poz + 1) ? " ihlal" : "") + (sec.has(id) ? " secili" : "");
+    d.className = "blok" + (ihl.has(poz + 1) ? " ihlal" : "") + (sec.has(id) ? " secili" : "")
+      + (gizli ? " gizli-kesim" : "");
     d.draggable = true;
     d.innerHTML = `<input class="no no-duz" value="${poz + 1}" title="Sıra no — yaz+Enter"
         inputmode="numeric">
       <div class="bveri"><div class="bx">X ${b.x.toFixed(1)}  Y ${b.y.toFixed(1)} ${dRozet}</div>
       <div class="by">orijinal #${oPoz + 1} · derinlik ${b.derinlik} · ${b.satir} satir${kesimStr}</div></div>
       <div class="etk ${b.derinlik>0?'ic':''}">${b.derinlik>0?'ic ('+b.derinlik+')':'dis'}</div>
+      <div class="blok-oniz" title="Bu kesimin konumu"></div>
       <button class="blok-sil" title="Bu bloğu sil">×</button>`;
+    d.querySelector(".blok-oniz").appendChild(gcMiniSvg(doc, b));
     const noInp = d.querySelector(".no-duz");
     noInp.onclick = e => e.stopPropagation();
     noInp.onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); gcNoDuzenle(doc, poz, noInp.value); }
@@ -794,58 +866,133 @@ function gcListe(doc, ihl) {
     kap.appendChild(d);
   });
 }
+// Yakin numara kumelerini ayirt etmek icin renk paleti.
+const GC_KUME_RENK = ["#0a84ff", "#ff9f0a", "#30d158", "#bf5af2", "#ff375f",
+                      "#64d2ff", "#ffd60a", "#ac8e68"];
+
 function gcSvg(doc) {
   const svg = $("svgGc"); if (!svg) return; svgKur(svg);
+  const st = doc.gc.stil, sec = doc.gc.secim;
   const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
+  const vis = gcGorunurSira(doc);                 // goster filtresi (ic/dis)
   const tum = [];
-  doc.gc.sira.forEach(id => komutKoords(blokById(doc, id).komut || []).forEach(p => tum.push(p)));
+  vis.forEach(id => komutKoords(blokById(doc, id).komut || []).forEach(p => tum.push(p)));
+  if (!tum.length) { izgara(svg, W, H); zoomEtkinlestir(svg); return; }
   const T = fitDonusum(tumBbox([tum]), W, H, 34);
   izgara(svg, W, H);
-  // kontur yollari (vektorel; yaylar egri, non-scaling-stroke)
-  doc.gc.sira.forEach(id => {
+  // kontur yollari — ic/dis rengiyle, opaklik + cizgi kalinligi stilden
+  vis.forEach(id => {
     const b = blokById(doc, id); if (!b.komut || b.komut.length < 2) return;
     ekle(svg, "path", { d: komutYol(b.komut, T), fill: "none",
-      stroke: "var(--cizgi)", "stroke-width": 1.4, "vector-effect": "non-scaling-stroke" });
+      stroke: (b.derinlik > 0 ? st.ic : st.dis), "stroke-width": st.cizgi,
+      opacity: st.opak, "vector-effect": "non-scaling-stroke" });
   });
   const defs = ekle(svg, "defs", {});
   defs.innerHTML = `<marker id="ok" markerWidth="7" markerHeight="7" refX="5" refY="3"
-    orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="var(--acc)"/></marker>
+    orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="${st.ok}"/></marker>
     <marker id="ok0" markerWidth="7" markerHeight="7" refX="5" refY="3"
     orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="#8e8e93"/></marker>`;
   const merkez = id => { const b = blokById(doc, id);
     return b.merkez ? T(b.merkez[0], b.merkez[1]) : T(b.x, b.y); };
-  // ORIJINAL sira katmani (karsilastirma): gri, kesikli -> altta.
+  // ORIJINAL sira katmani (karsilastirma): gri, kesikli
   if (doc.gc.karsilastir) {
-    for (let i = 0; i < doc.gc.orijinal.length - 1; i++) {
-      const [x1, y1] = merkez(doc.gc.orijinal[i]), [x2, y2] = merkez(doc.gc.orijinal[i + 1]);
+    const vo = doc.gc.orijinal.filter(id => vis.includes(id));
+    for (let i = 0; i < vo.length - 1; i++) {
+      const [x1, y1] = merkez(vo[i]), [x2, y2] = merkez(vo[i + 1]);
       ekle(svg, "line", { x1, y1, x2, y2, stroke: "#8e8e93", "stroke-width": 1.1,
         opacity: .5, "stroke-dasharray": "5 4", "vector-effect": "non-scaling-stroke",
         "marker-end": "url(#ok0)" });
     }
   }
-  // DUZENLENMIS (mevcut) sira katmani: accent, duz -> ustte.
-  for (let i = 0; i < doc.gc.sira.length - 1; i++) {
-    const [x1, y1] = merkez(doc.gc.sira[i]), [x2, y2] = merkez(doc.gc.sira[i + 1]);
-    ekle(svg, "line", { x1, y1, x2, y2, stroke: "var(--acc)", "stroke-width": 1.3,
-      opacity: .55, "vector-effect": "non-scaling-stroke", "marker-end": "url(#ok)" });
+  // Tasima yolu (gorunur sira boyunca)
+  for (let i = 0; i < vis.length - 1; i++) {
+    const [x1, y1] = merkez(vis[i]), [x2, y2] = merkez(vis[i + 1]);
+    ekle(svg, "line", { x1, y1, x2, y2, stroke: st.ok, "stroke-width": 1.3,
+      opacity: Math.min(.6, st.opak), "vector-effect": "non-scaling-stroke", "marker-end": "url(#ok)" });
   }
-  // koprü (tab) isaretleri
   if (doc.gc.tabAcik && doc.gc.tablar) {
     doc.gc.tablar.forEach(liste => (liste || []).forEach(([x, y]) => {
       const [px, py] = T(x, y);
       ekle(svg, "circle", { cx: px, cy: py, r: 4, "data-baser": 4, class: "tab-nokta" });
     }));
   }
-  doc.gc.sira.forEach((id, poz) => {
-    const [cx, cy] = merkez(id);
-    const renk = poz === 0 ? "#34c759" : (poz === doc.gc.sira.length - 1 ? "#af52de" : "#ff3b30");
-    ekle(svg, "circle", { cx, cy, r: 12, "data-baser": 12, fill: "var(--yuzey)",
-      stroke: renk, "stroke-width": 2.2, "vector-effect": "non-scaling-stroke" });
-    const t = ekle(svg, "text", { x: cx, y: cy + 4, "text-anchor": "middle",
-      "font-size": 11, "data-basefs": 11, fill: "var(--metin)", "font-weight": 700 });
-    t.textContent = poz + 1;
+  // ---- Numaralar: cakismayi coz + yakin kumeleri farkli renk ----
+  const R = 12;
+  const noktalar = vis.map(id => { const [cx, cy] = merkez(id);
+    return { id, poz: doc.gc.sira.indexOf(id), cx, cy }; });
+  // Kumeleme: birbirine 2R'den yakin numaralar ayni kumede (union-find benzeri).
+  const kume = noktalar.map(() => -1); let nk = 0;
+  for (let i = 0; i < noktalar.length; i++) {
+    if (kume[i] < 0) { kume[i] = nk; nk++; }
+    for (let j = i + 1; j < noktalar.length; j++) {
+      const dx = noktalar[i].cx - noktalar[j].cx, dy = noktalar[i].cy - noktalar[j].cy;
+      if (Math.hypot(dx, dy) < 2.1 * R) kume[j] = kume[i];
+    }
+  }
+  const kumeUye = {}; noktalar.forEach((p, i) => (kumeUye[kume[i]] = kumeUye[kume[i]] || []).push(i));
+  noktalar.forEach((p, i) => {
+    const uyeler = kumeUye[kume[i]];
+    let cx = p.cx, cy = p.cy, kumeli = uyeler.length > 1;
+    if (kumeli) {                                    // cakisan -> merkez etrafina yay
+      const mx = uyeler.reduce((a, k) => a + noktalar[k].cx, 0) / uyeler.length;
+      const my = uyeler.reduce((a, k) => a + noktalar[k].cy, 0) / uyeler.length;
+      const k = uyeler.indexOf(i), a = (k / uyeler.length) * 2 * Math.PI;
+      const rr = R * 1.7;
+      cx = mx + rr * Math.cos(a); cy = my + rr * Math.sin(a);
+      ekle(svg, "line", { x1: mx, y1: my, x2: cx, y2: cy, stroke: "#8e8e93",
+        "stroke-width": .8, opacity: .6, "vector-effect": "non-scaling-stroke" });
+    }
+    const secili = sec.has(p.id);
+    const cerceve = secili ? "var(--acc)"
+      : kumeli ? GC_KUME_RENK[kume[i] % GC_KUME_RENK.length]
+      : (p.poz === 0 ? st.bas : (p.poz === doc.gc.sira.length - 1 ? "#af52de" : "#ff3b30"));
+    const grp = ekle(svg, "g", { class: "gc-no", "data-id": p.id, style: "cursor:pointer" });
+    ekle(grp, "circle", { cx, cy, r: R, "data-baser": R, fill: "var(--yuzey)",
+      stroke: cerceve, "stroke-width": secili ? 3.2 : 2.2, "vector-effect": "non-scaling-stroke" });
+    const t = ekle(grp, "text", { x: cx, y: cy + st.nboyut * 0.36, "text-anchor": "middle",
+      "font-size": st.nboyut, "data-basefs": st.nboyut, fill: st.numara, "font-weight": 700 });
+    t.textContent = p.poz + 1;
+    grp.addEventListener("click", e => {
+      if (e.ctrlKey || e.metaKey) { e.stopPropagation();
+        if (sec.has(p.id)) sec.delete(p.id); else sec.add(p.id);
+        doc.gc.capa = p.id; gcSvg(doc); gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
+    });
+    grp.addEventListener("dblclick", e => { e.stopPropagation(); gcListeyeGit(doc, p.id); });
   });
   zoomEtkinlestir(svg);
+}
+
+// Onizlemedeki numaraya cift tik -> soldaki listede o bloga kaydir + vurgula.
+function gcListeyeGit(doc, id) {
+  const poz = doc.gc.sira.indexOf(id); if (poz < 0) return;
+  const kap = $("g_liste"); if (!kap) return;
+  const d = kap.children[poz]; if (!d) return;
+  d.scrollIntoView({ behavior: "smooth", block: "center" });
+  d.classList.add("vurgu"); setTimeout(() => d.classList.remove("vurgu"), 1400);
+}
+
+// Onizlemeyi SVG/PNG olarak indir.
+function gcOnizlemeIndir(doc, fmt) {
+  const svg = $("svgGc"); if (!svg) return;
+  const klon = svg.cloneNode(true);
+  klon.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
+  klon.setAttribute("width", W); klon.setAttribute("height", H);
+  const s = new XMLSerializer().serializeToString(klon);
+  const ad = (doc.ad || "gcode").replace(/\.[^.]+$/, "");
+  if (fmt === "svg") {
+    const blob = new Blob([s], { type: "image/svg+xml" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
+    a.download = ad + "_onizleme.svg"; a.click(); URL.revokeObjectURL(a.href); return;
+  }
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement("canvas"); c.width = W * 2; c.height = H * 2;
+    const cx = c.getContext("2d"); cx.scale(2, 2); cx.drawImage(img, 0, 0);
+    c.toBlob(b => { const a = document.createElement("a"); a.href = URL.createObjectURL(b);
+      a.download = ad + "_onizleme.png"; a.click(); URL.revokeObjectURL(a.href); });
+  };
+  img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(s)));
 }
 
 // ===================== SVG yardimcilari =====================

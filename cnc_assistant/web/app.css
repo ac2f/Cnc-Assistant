@@ -237,6 +237,18 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .gc-info .tl{font-size:10.5px;color:var(--metin2);text-transform:uppercase;letter-spacing:.3px}
 .gc-info .ti b{font-size:14px;font-variant-numeric:tabular-nums}
 .gc-info .sure b{color:var(--acc);font-size:16px}
+.gc-stil{display:flex;gap:9px 12px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+.gc-stil .st-renk,.gc-stil .st-say{display:flex;align-items:center;gap:5px;
+  font-size:11px;color:var(--metin2)}
+.gc-stil input[type=color]{width:26px;height:22px;padding:0;border:1px solid var(--cizgi);
+  border-radius:6px;background:none;cursor:pointer}
+.gc-stil input[type=range]{width:78px}
+.blok-oniz{flex:none;width:48px;height:48px;border:1px solid var(--cizgi);border-radius:8px;
+  background:var(--yuzey);display:grid;place-items:center;margin-left:6px;overflow:hidden}
+.blok-oniz .mini-svg{width:100%;height:100%}
+.blok.vurgu{background:color-mix(in srgb,var(--acc) 28%,transparent);transition:background .2s}
+.blok.gizli-kesim{opacity:.42}
+.gc-no text{user-select:none}
 .gc-arac{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
 .ayrac{width:1px;height:24px;background:var(--cizgi);margin:0 2px}
 .durum{font-size:12.5px;color:var(--metin2);margin-top:10px;white-space:pre-wrap;line-height:1.6}
