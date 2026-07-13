@@ -38,7 +38,7 @@ def dxf_opts(args):
     return {
         "node_temizle": not args.node_temizleme_yok,
         "node_tol": args.node_tol,
-        "destek_yonu": _DESTEK_YONU.get(args.destek_yonu, (-1.0, 1.0)),
+        "destek_yonu": _DESTEK_YONU.get(args.destek_yonu, (1.0, 1.0)),
     }
 
 
@@ -90,12 +90,12 @@ def kurulum_parser():
                        help="Risk esigi: parca bbox alani / tabaka alani")
     g_dxf.add_argument("--boyut-orani", type=float, default=0.50,
                        help="Risk esigi: parca eni-boyu / tabaka eni-boyu")
-    g_dxf.add_argument("--destek-yonu", choices=("sol-ust", "ust", "sag-ust"),
-                       default="sol-ust",
-                       help="Baslangic (kopma) noktasi bolgesi: sol-ust "
-                            "(varsayilan; elle-optimize yerlesimine en yakin), "
-                            "'ust' (orta-ust) veya 'sag-ust'. Baslangic ust "
-                            "kenarda secilen tarafa yakin bir vertex'e tasinir.")
+    g_dxf.add_argument("--destek-yonu", choices=("sag-ust", "ust", "sol-ust"),
+                       default="sag-ust",
+                       help="Baslangic (kopma) noktasi bolgesi: sag-ust "
+                            "(VARSAYILAN), 'ust' (orta-ust) veya 'sol-ust'. "
+                            "Baslangic ust kenarda secilen tarafa yakin bir "
+                            "vertex'e tasinir.")
     g_dxf.add_argument("--node-tol", type=float, default=G.NODE_TOL,
                        help="Node sadelestirme tolerasi (cizim birimi)")
     g_dxf.add_argument("--node-temizleme-yok", action="store_true",

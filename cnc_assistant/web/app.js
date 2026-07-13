@@ -188,7 +188,7 @@ function dosyaAc(f) {
   const doc = { id: ++sayac, yol: f.yol, ad: f.ad, tur: f.tur, durum: "yeni" };
   if (f.tur === "dxf") {
     doc.params = Object.assign(
-      { destek: "sol-ust", node_tol: 1e-6, node_temiz: true },
+      { destek: "sag-ust", node_tol: 1e-6, node_temiz: true },
       AYAR.al("dxfParams", {}));
     doc.onizGecmis = []; doc.onizAktif = -1;
   }
@@ -276,9 +276,9 @@ function dxfIcerik(doc) {
       <div class="arac">
         <div class="grup"><label>Baslangic (kopma) destek yonu</label>
           <select class="alan" id="d_destek" style="width:170px">
-            <option value="sol-ust">Sol-ust (onerilen)</option>
+            <option value="sag-ust">Sag-ust (varsayilan)</option>
             <option value="ust">Orta-ust</option>
-            <option value="sag-ust">Sag-ust</option>
+            <option value="sol-ust">Sol-ust</option>
           </select></div>
         <div class="grup"><label>Node toleransi</label>
           <input type="text" class="alan kk" id="d_tol" value="${p.node_tol}"></div>
@@ -350,7 +350,7 @@ function dxfIcerik(doc) {
   // olaylar
   const kaydetP = () => AYAR.yaz("dxfParams", p);
   setTimeout(() => {
-    $("d_destek").value = p.destek || "sol-ust";
+    $("d_destek").value = p.destek || "sag-ust";
     $("d_destek").onchange = e => { p.destek = e.target.value; kaydetP(); yukle(doc); };
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };

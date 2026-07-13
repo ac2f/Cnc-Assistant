@@ -8,17 +8,17 @@ Bu modul saf-Python (ezdxf'e bagimli olmayan) geometri islemlerini icerir:
   * Node (vertex) sadelestirme  -> gereksiz, es-dogrultulu (collinear) ve
     sifir-uzunluklu noktalarin GEOMETRIYI BOZMADAN kaldirilmasi.
   * Baslangic (lead-in) noktasi hedefleme:
-        - Normal parcalar: UST kenarda, SOLDAN ~%20 konumunda (sol-ust bolge,
-          keskin kose degil) -> operatorun elle yaptigi "manuel optimize"
-          yerlesimini birebir taklit eder; kesim boyunca destek korunur.
+        - Normal parcalar: UST kenarda, SAG-UST bolgede (keskin kose degil,
+          kenardan az iceride) -> baslangic DAIMA SAG-UST.
         - Uzun-ince (serit) parcalar:
-            * dikey serit -> SOL kenar, ucundan degil ~%25 iceride
+            * dikey serit -> SAG kenar, ucundan degil ~%25 iceride
               (iki uctan da destekte kalir),
             * yatay serit -> UST kenar (normal parca kurali).
 
-  Not: Baslangic hedefi eskiden SAG-UST idi; gercek uretim dosyalari
-  (ArtCAM'de elle optimize edilmis) incelendiginde operatorun tutarli olarak
-  SOL-UST bolgeyi sectigi olculdu ve algoritma buna gore duzeltildi.
+  KURAL: Baslangic noktasi DAIMA SAG-UST'tur (varsayilan ve kalici). Destek-
+  farkindalikli strateji, baslangici yalnizca ince/desteksiz bir cikinti
+  uzerine denk gelirse ayni tarafta daha DESTEKLI bir noktaya kaydirir; taraf
+  yine SAG'dir.
 
 Noktalar `(x, y, start_width, end_width, bulge)` bicimindeki tuple listesi
 olarak temsil edilir (ezdxf LWPOLYLINE "xyseb" formatiyla birebir uyumlu).
@@ -105,13 +105,11 @@ BASLANGIC_KABUL_TOL = 0.02
 UST_Y_AGIRLIK = 0.10
 
 # DESTEK/BASLANGIC YONU (dx, dy). Yalnizca YATAY isaret (dx) kullanilir:
-# dx<0 -> SOL-UST (varsayilan), dx>0 -> sag-ust, dx~0 -> orta-ust. Dikey serit
-# parcalarda ayni isaret hangi yan kenarin secilecegini belirler.
-# NOT: Varsayilan SOL-UST'tur; web ve CLI de "sol-ust" varsayar (motor
-# varsayilaniyla tutarli). Baslangic tarafi kalici bir GLOBAL ayardir
-# (makine/is-akisi yonelimine gore bir kez secilir); tum sekil kurallarini
-# (dikdortgen, serit, raptiye, I-kiris) tutarli olarak ayni tarafa alir.
-DESTEK_YONU = (-1.0, 1.0)
+# dx>0 -> SAG-UST (VARSAYILAN ve KALICI), dx<0 -> sol-ust, dx~0 -> orta-ust.
+# KURAL: Baslangic noktasi DAIMA SAG-UST'tur. Motor, web ve CLI hepsi SAG-UST
+# varsayar; tum sekil kurallari (dikdortgen, serit, raptiye, I-kiris) baslangici
+# tutarli olarak SAG tarafa alir.
+DESTEK_YONU = (1.0, 1.0)
 
 # Yon-projeksiyonu primitifi (destek_ucu_indeks) icin "en uc" bandi.
 DESTEK_BANT_ORANI = 0.02
