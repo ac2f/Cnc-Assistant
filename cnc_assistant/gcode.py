@@ -497,22 +497,62 @@ def _strateji_uygula(bloklar, mod):
     return sol_alt_sag_ust_sirala(bloklar)
 
 
+def _direkt_ebeveyn(bloklar):
+    """Her blok icin DOGRUDAN kapsayan (onu iceren EN KUCUK) blogun indeksini
+    doner; kok (disaridaki) bloklar icin None. Icerme AGACI kurmak icin."""
+    n = len(bloklar)
+    polys = [blok_polygon(b) for b in bloklar]
+    bboxes = [blok_bbox(b) for b in bloklar]
+    tum = [v for box in bboxes for v in (box[0], box[2])]
+    olcek = (max(tum) - min(tum)) if tum else 0.0
+    tol = max(olcek * 1e-4, 1e-6)
+    ebeveyn = [None] * n
+    for i in range(n):
+        en_kucuk, en_alan = None, None
+        for j in range(n):
+            if i == j:
+                continue
+            if _ic_ice_mi(bboxes[i], polys[i], bboxes[j], polys[j], tol):
+                a = _bbox_alani(bboxes[j])
+                if en_alan is None or a < en_alan:
+                    en_alan, en_kucuk = a, j
+        ebeveyn[i] = en_kucuk
+    return ebeveyn
+
+
 def sirala(bloklar, mod="sol-alt"):
-    """Bloklari siralar. ICERME (nesting) her zaman BIRINCIL anahtardir:
-    en icteki (derinligi en yuksek) bloklar once kesilir; boylece 'O'
-    harfinin gobegindeki vektorler dis konturdan ONCE kesilir. Ayni derinlik
-    seviyesindeki bloklar arasinda secilen strateji (mod) uygulanir."""
-    if not bloklar:
+    """Bloklari ICERME AGACI post-order ile siralar:
+      * DIS parcalar SOL-ALTTAN SAG-USTE (secilen strateji) sirasinda,
+      * her parcanin IC kesimleri kendi DIS konturundan HEMEN ONCE (yine
+        sol-alt->sag-ust, en icten disa) islenir.
+    Boylece kesim parca-parca ilerler ve bir parcanin ici DAIMA disindan ONCE
+    kesilir -> serbest kalan/desteksiz nokta olusmaz. (Onceki davranis: TUM ic
+    kesimler globalce once, sonra tum dis kesimler -> kullanici bunu istemiyordu.)"""
+    n = len(bloklar)
+    if n == 0:
         return []
-    derinlik = containment_derinlik(bloklar)
-    # Derinlige gore grupla
-    gruplar = {}
-    for b, d in zip(bloklar, derinlik):
-        gruplar.setdefault(d, []).append(b)
+    ebeveyn = _direkt_ebeveyn(bloklar)
+    cocuklar = {i: [] for i in range(n)}
+    kokler = []
+    for i, p in enumerate(ebeveyn):
+        (cocuklar[p].append(i) if p is not None else kokler.append(i))
+
+    def _sirali_idx(idxler):
+        if not idxler:
+            return []
+        alt = [bloklar[i] for i in idxler]
+        id2i = {id(bloklar[i]): i for i in idxler}
+        return [id2i[id(b)] for b in _strateji_uygula(alt, mod)]
+
     sonuc = []
-    # Derinligi buyukten kucuge (en icten disa)
-    for d in sorted(gruplar, reverse=True):
-        sonuc.extend(_strateji_uygula(gruplar[d], mod))
+
+    def gez(i):
+        for c in _sirali_idx(cocuklar[i]):     # once ic (cocuk) kesimler
+            gez(c)
+        sonuc.append(bloklar[i])               # sonra dis (bu parca)
+
+    for r in _sirali_idx(kokler):
+        gez(r)
     return sonuc
 
 
