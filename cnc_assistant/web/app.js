@@ -580,9 +580,9 @@ function gcGorunurSira(doc) {
 // ---- Grup/duzenleme araclari (secime gore) ----
 function gcSecimIdler(doc) { return doc.gc.sira.filter(id => doc.gc.secim.has(id)); }
 function gcTumSec(doc) { doc.gc.secim = new Set(doc.gc.sira); doc.gc.capa = doc.gc.sira[0];
-  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); }
 function gcSecTemizle(doc) { doc.gc.secim.clear(); doc.gc.capa = null;
-  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); }
 function gcSecSil(doc) {
   const sec = doc.gc.secim; if (!sec.size) return;
   const yeni = doc.gc.sira.filter(id => !sec.has(id));
@@ -778,7 +778,7 @@ function gcSecimTik(doc, poz, e) {
   } else {
     sec.clear(); sec.add(id); doc.gc.capa = id;
   }
-  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc);
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc);
 }
 
 // Sira numarasini elle duzenle: blok yeni pozisyona (1-tabanli) tasinir.
@@ -854,7 +854,7 @@ function gcListe(doc, ihl) {
       doc.gc.secim = new Set([id]); gcSecSil(doc); };
     d.onclick = e => gcSecimTik(doc, poz, e);
     d.ondragstart = e => {
-      if (!sec.has(id)) { sec.clear(); sec.add(id); doc.gc.capa = id; gcListe(doc, ihl); gcGrupCiz(doc); }
+      if (!sec.has(id)) { sec.clear(); sec.add(id); doc.gc.capa = id; gcListe(doc, ihl); gcGrupCiz(doc); gcSvg(doc); }
       e.dataTransfer.setData("k", poz); d.classList.add("suru");
     };
     d.ondragend = () => d.classList.remove("suru");

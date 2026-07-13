@@ -416,21 +416,31 @@ def _x_araliklari_cakisiyor_mu(b1, b2, x_tol):
 
 
 def sol_alt_sag_ust_sirala(bloklar):
-    """VARSAYILAN siralama: malzemenin destegi her zaman korunacak sekilde
-    SOL-ALTTAN SAG-USTE ilerler. Once Y (asagidan yukari), esitlikte X
-    (soldan saga) kucukten buyuge. Boylece kesim her zaman henuz kesilmemis
-    (destekli) malzemeye dogru ilerler."""
-    # Y'yi bantlara yuvarlayarak ayni "satir"daki parcalarin soldan saga
-    # gelmesini garanti et (kucuk Y farklari siralamayi bozmasin).
-    ys = [blok_bas_xy(b)[1] for b in bloklar]
-    aralik = (max(ys) - min(ys)) if ys else 0.0
-    bant = max(aralik * 0.04, 1e-9)
+    """VARSAYILAN siralama. KURAL: malzeme AGIRLIKLI olarak SAG ve UST'ten
+    sabitlenir; dolayisiyla bir parca kesilirken SAGINDA (ve ustunde) daha
+    once kesilmis bir bosluk OLMAMALIDIR -> destek daima korunur.
 
-    def anahtar(b):
-        x, y = blok_bas_xy(b)
-        return (round(y / bant), x, y)
+    Bunu garanti etmek icin kesim SOLDAN SAGA (X artan) ilerler: her parca,
+    kendisinden tamamen SAGDA olan tum parcalardan ONCE kesilir. Ayni dusey
+    seride (yakin X) olan parcalar ALTTAN USTE (Y artan). Boylece 'clamp
+    tarafi' (sag/ust) en son kesilir; her an sag/ust malzeme butundur.
 
-    return sorted(bloklar, key=anahtar)
+    Konumlama parcanin GERCEK govdesine (bbox merkezi) gore yapilir; boylece
+    lead-in noktasinin nerede oldugundan bagimsizdir."""
+    merkezler = []
+    for b in bloklar:
+        x0, y0, x1, y1 = blok_bbox(b)
+        merkezler.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
+    xs = [m[0] for m in merkezler]
+    aralik = (max(xs) - min(xs)) if xs else 0.0
+    bant = max(aralik * 0.04, 1e-9)   # yakin-X parcalar ayni 'sutun' sayilir
+
+    def anahtar(i):
+        cx, cy = merkezler[i]
+        return (round(cx / bant), cy, cx)
+
+    idx = sorted(range(len(bloklar)), key=anahtar)
+    return [bloklar[i] for i in idx]
 
 
 def engel_farkindalikli_sirala(bloklar):
