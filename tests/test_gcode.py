@@ -166,6 +166,31 @@ def test_icerme_coklu_ic_parca():
         assert bb != (0.0, 0.0, 200.0, 200.0)
 
 
+def test_destek_sirasi_sag_ust_korunur():
+    """CNC-ustasi kurali: malzeme SAG + UST'ten sabit. Siralamada bir parca
+    kesilirken SAGINDA (Y cakismali) veya USTUNDE (X cakismali) daha once
+    kesilmis parca OLMAMALI. 3x3 kare izgara ile ihlal=0 dogrulanir."""
+    from cnc_assistant.gcode import sol_alt_sag_ust_sirala, blok_bbox
+    bloklar = []
+    for r in range(3):            # satir (Y)
+        for c in range(3):        # sutun (X)
+            x0, y0 = c * 100, r * 100
+            bloklar.append(_kare_blok(x0, y0, x0 + 60, y0 + 60))
+    sirali = sol_alt_sag_ust_sirala(list(bloklar))
+    bx = [blok_bbox(b) for b in sirali]
+    mz = [((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for b in bx]
+    for i in range(len(sirali)):          # i su an kesiliyor
+        for k in range(i):                # k daha once kesildi
+            yc = min(bx[i][3], bx[k][3]) > max(bx[i][1], bx[k][1])
+            xc = min(bx[i][2], bx[k][2]) > max(bx[i][0], bx[k][0])
+            # k, i'nin saginda ve once kesilmis -> ihlal
+            assert not (yc and mz[k][0] > mz[i][0]), f"sag destek ihlali {k}->{i}"
+            # k, i'nin ustunde ve once kesilmis -> ihlal
+            assert not (xc and mz[k][1] > mz[i][1]), f"ust destek ihlali {k}->{i}"
+    # ilk kesilen sol-alt kose olmali
+    assert blok_bbox(sirali[0])[:2] == (0.0, 0.0)
+
+
 if __name__ == "__main__":
     import traceback
     fails = 0

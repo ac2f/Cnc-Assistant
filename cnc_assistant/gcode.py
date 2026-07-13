@@ -416,31 +416,98 @@ def _x_araliklari_cakisiyor_mu(b1, b2, x_tol):
 
 
 def sol_alt_sag_ust_sirala(bloklar):
-    """VARSAYILAN siralama. KURAL: malzeme AGIRLIKLI olarak SAG ve UST'ten
-    sabitlenir; dolayisiyla bir parca kesilirken SAGINDA (ve ustunde) daha
-    once kesilmis bir bosluk OLMAMALIDIR -> destek daima korunur.
+    """VARSAYILAN siralama. Bir CNC USTASI gibi dusunur: malzeme AGIRLIKLI
+    olarak SAG ve UST'ten sabitlenir; dolayisiyla bir parca kesilirken
+    SAGINDA (ve ustunde) daha once kesilmis bir bosluk OLMAMALIDIR ->
+    destek daima korunur. Ayrica yol RASTGELE degil, DUZENLI olmalidir.
 
-    Bunu garanti etmek icin kesim SOLDAN SAGA (X artan) ilerler: her parca,
-    kendisinden tamamen SAGDA olan tum parcalardan ONCE kesilir. Ayni dusey
-    seride (yakin X) olan parcalar ALTTAN USTE (Y artan). Boylece 'clamp
-    tarafi' (sag/ust) en son kesilir; her an sag/ust malzeme butundur.
+    Iki asamali kurulur:
 
-    Konumlama parcanin GERCEK govdesine (bbox merkezi) gore yapilir; boylece
-    lead-in noktasinin nerede oldugundan bagimsizdir."""
-    merkezler = []
-    for b in bloklar:
-        x0, y0, x1, y1 = blok_bbox(b)
-        merkezler.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0))
-    xs = [m[0] for m in merkezler]
-    aralik = (max(xs) - min(xs)) if xs else 0.0
-    bant = max(aralik * 0.04, 1e-9)   # yakin-X parcalar ayni 'sutun' sayilir
+    1) DESTEK KISITI (kesin oncelik, asla bozulmaz):
+         * i ve j Y'de cakisiyor ve j, i'nin SAGINDA ise -> i, j'den ONCE.
+           (j kesilirken saginda -> i tarafinda- kesilmis bosluk kalmaz;
+            clamp tarafi/sag en son kesilir)
+         * i ve j X'te cakisiyor ve j, i'nin USTUNDE ise -> i, j'den ONCE.
+           (ust destek korunur; alttan uste ilerlenir)
 
-    def anahtar(i):
-        cx, cy = merkezler[i]
-        return (round(cx / bant), cy, cx)
+    2) Kisiti bozmadan DUZENLI SUPURME: her adimda kesime HAZIR (tum
+       onculleri islenmis) parcalar arasindan ALTTAN-USTE / SOLDAN-SAGA
+       (satir-satir raster) olani secilir. Boylece onceki 'X-sutunu'
+       yaklasiminin tabaka boyunu bir kolonda bir asagi bir yukari
+       tarayan sicramalari ortadan kalkar; yol pürüzsüz ilerler.
 
-    idx = sorted(range(len(bloklar)), key=anahtar)
-    return [bloklar[i] for i in idx]
+    Konumlama parcanin GERCEK govdesine (bbox merkezi) gore yapilir;
+    lead-in noktasinin yerinden bagimsizdir."""
+    n = len(bloklar)
+    if n <= 1:
+        return list(bloklar)
+
+    bboxlar = [blok_bbox(b) for b in bloklar]
+    merkez = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in bboxlar]
+
+    tum_x = [v for b in bboxlar for v in (b[0], b[2])]
+    tum_y = [v for b in bboxlar for v in (b[1], b[3])]
+    gen_x = (max(tum_x) - min(tum_x)) if tum_x else 0.0
+    gen_y = (max(tum_y) - min(tum_y)) if tum_y else 0.0
+    x_tol = max(gen_x * 0.02, 1e-9)
+    y_tol = max(gen_y * 0.02, 1e-9)
+    eps = 1e-9
+
+    def _y_ust_uste(i, j):        # Y araliklari cakisiyor mu (yatay komsu)
+        return (min(bboxlar[i][3], bboxlar[j][3])
+                - max(bboxlar[i][1], bboxlar[j][1])) > -y_tol
+
+    def _x_ust_uste(i, j):        # X araliklari cakisiyor mu (dusey komsu)
+        return (min(bboxlar[i][2], bboxlar[j][2])
+                - max(bboxlar[i][0], bboxlar[j][0])) > -x_tol
+
+    # ONCELIK GRAFI. Kenar SADECE gercek komsuluk yonunde konur; boylece
+    # graf DONGUSUZ kalir (yoksa tolerans iki eksende birden cakisma sanip
+    # dongu -> destek ihlali uretiyordu). Bir (i,j) cifti icin ayrilma
+    # HANGI eksende baskinsa o kural uygulanir:
+    #   * baskin eksen X (yatay komsu) -> SOLDAKI once (sag destegi korunur)
+    #   * baskin eksen Y (dusey komsu) -> ALTTAKI once (ust destegi korunur)
+    # Capraz (hicbir eksende cakismayan) parcalar arasinda kisit YOK ->
+    # yol serbestce en yakini secerek pürüzsüz ilerler.
+    onculler = [set() for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = merkez[j][0] - merkez[i][0]
+            dy = merkez[j][1] - merkez[i][1]
+            yc = _y_ust_uste(i, j)
+            xc = _x_ust_uste(i, j)
+            if not yc and not xc:
+                continue                       # capraz -> kisit yok
+            yatay = yc if yc != xc else (abs(dx) >= abs(dy))
+            if yatay:                          # yatay komsu: soldaki once
+                (onculler[j] if dx > eps else onculler[i]).add(
+                    i if dx > eps else j)
+            else:                              # dusey komsu: alttaki once
+                (onculler[j] if dy > eps else onculler[i]).add(
+                    i if dy > eps else j)
+
+    # TIE-BREAK: kesime hazir olanlar arasindan takima EN YAKIN olani sec
+    # (nearest-neighbor). Baslangic sol-alt kose. Boylece uzun/rastgele Y
+    # sicramalari kalkar; destek kisiti zaten alttan-sola -> sag-uste akisi
+    # zorladigi icin yol capraz ve duzenli ilerler.
+    min_x = min(b[0] for b in bboxlar)
+    min_y = min(b[1] for b in bboxlar)
+    konum = (min_x, min_y)
+
+    kalan = set(range(n))
+    tamam = set()
+    sonuc = []
+    while kalan:
+        hazir = [i for i in kalan if onculler[i] <= tamam]
+        if not hazir:                 # (beklenmedik) dongu -> kilitlenmeyi
+            hazir = list(kalan)       # onlemek icin en yakini yine de sec
+        sec = min(hazir, key=lambda i: (blok_bas_xy(bloklar[i])[0] - konum[0]) ** 2
+                  + (blok_bas_xy(bloklar[i])[1] - konum[1]) ** 2)
+        sonuc.append(bloklar[sec])
+        konum = _blok_son_xy(bloklar[sec], blok_bas_xy(bloklar[sec]))
+        kalan.discard(sec)
+        tamam.add(sec)
+    return sonuc
 
 
 def engel_farkindalikli_sirala(bloklar):
