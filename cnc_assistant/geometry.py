@@ -747,11 +747,17 @@ def _baslangic_hedef_nokta(pts, **kw):
     d = kw.get("destek_yonu", DESTEK_YONU)
     dx = d[0] if d else -1.0
 
-    # 0) Dairesel (daire / yuvarlak) parca -> baslangic SAG-UST (45 derece):
-    #    kontur uzerinde x+y'si en buyuk nokta. (Duz kesimde sag-uste yakin
-    #    lead-in; CAM disi kontrolde de tutarli.)
-    if kw.get("dairesel_sag_ust", True) and dairesel_mi(pts, w, h):
-        tpt = max(pts, key=lambda p: p[0] + p[1])
+    # 0) Dairesel (daire / yuvarlak) parca -> baslangic 45 derece, DESTEK YONUNDE:
+    #    dx>0 -> sag-ust (x+y en buyuk), dx<0 -> sol-ust (y-x en buyuk),
+    #    dx~0 -> ust-orta (y en buyuk). (Onceden daima sag-ust'e sabitti; destek
+    #    ayarini yok sayiyordu -> hata.)
+    if kw.get("dairesel_konum", True) and dairesel_mi(pts, w, h):
+        if dx > 0.05:
+            tpt = max(pts, key=lambda p: p[0] + p[1])       # sag-ust
+        elif dx < -0.05:
+            tpt = max(pts, key=lambda p: -p[0] + p[1])      # sol-ust
+        else:
+            tpt = max(pts, key=lambda p: p[1])              # ust-orta
         return (tpt[0], tpt[1], None, True, uzun_ince)
 
     # 1) Dikey ince serit / "I" -> sag kontur, sag-orta/sag-alt. Serit tespiti
@@ -801,15 +807,25 @@ def _baslangic_hedef_nokta(pts, **kw):
         return (tx, r[0] if r else ymax,
                 r[1] if r else None, r[2] if r else False, uzun_ince)
 
-    # 3) Cok uzun/riskli yatay serit -> en genis bolgede, orta-sag.
+    # 3) Cok uzun/riskli yatay serit -> en genis bolgede, destek-yonu ucunda.
+    #    DIKKAT: yalnizca GERCEK yatay serit (w >> h). Buyuk ama kare-benzeri
+    #    parcalar (orn. 780x715) buraya DUSMEZ -> normal kurala gider ve destek
+    #    ayarina uyar. Ayrica konum artik destek_yonu'na (dx) gore ayarlanir
+    #    (onceden daima sag'a sabitti -> ayari yok sayiyordu, hata).
     tabaka_w = kw.get("tabaka_w")
     boyut_orani = kw.get("boyut_orani", 0.50)
-    riskli_yatay = (w > h and tabaka_w and tabaka_w > 0
+    riskli_yatay = (w > 2.0 * h and tabaka_w and tabaka_w > 0
                     and (w / tabaka_w) > boyut_orani)
 
     if riskli_yatay and "bas_x_orani" not in kw:
         a, b = max(kosular, key=lambda ab: ab[1] - ab[0])
-        frac = kw.get("yatay_serit_x_orani", YATAY_SERIT_X_ORANI)
+        yorani = kw.get("yatay_serit_x_orani", YATAY_SERIT_X_ORANI)
+        if dx > 0.05:
+            frac = yorani                 # sag ucta
+        elif dx < -0.05:
+            frac = 1.0 - yorani           # sol ucta
+        else:
+            frac = 0.5                    # orta
         tx = a + frac * (b - a)
     else:
         # Hedef X orani (bolge ICINDE soldan): destek_yonu'nun dx isaretine gore.

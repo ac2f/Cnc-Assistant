@@ -252,6 +252,36 @@ def test_destek_baslangic_cikintiyi_atlar():
     assert bx > 40         # desteksiz ledge (x<40) yerine govdede (varsayilan SOL olsa da)
 
 
+def test_buyuk_dikdortgen_destek_ayarina_uyar():
+    # REGRESYON: buyuk ama kare-benzeri dikdortgen (w~h) YANLISLIKLA "riskli
+    # yatay serit" sayilip daima saga sabitlenmemeli; destek ayarina uymali.
+    pts = [(0, 0, 0, 0, 0), (780, 0, 0, 0, 0), (780, 715, 0, 0, 0), (0, 715, 0, 0, 0)]
+    o = {"tabaka_w": 1500.0, "boyut_orani": 0.5}
+    i, u, ek = G.baslangic_indeksi_belirle(pts, destek_yonu=(1.0, 1.0), **o)
+    sx = ek[1][0] if i is None and ek else pts[i % len(pts)][0]
+    assert sx / 780 > 0.6                    # SAG
+    i2, u2, e2 = G.baslangic_indeksi_belirle(pts, destek_yonu=(-1.0, 1.0), **o)
+    sx2 = e2[1][0] if i2 is None and e2 else pts[i2 % len(pts)][0]
+    assert sx2 / 780 < 0.4                   # SOL -> gercekten sola gitti
+
+
+def test_daire_destek_ayarina_uyar():
+    # REGRESYON: daire daima sag-ust'e sabit degil; destek ayarina gore
+    # sag-ust (dx>0) veya sol-ust (dx<0) 45 derece.
+    import math as m
+    cx = cy = 100.0
+    r = 50.0
+    circ = [(cx + r * m.cos(t), cy + r * m.sin(t), 0, 0, 0)
+            for t in [k * 2 * m.pi / 64 for k in range(64)]]
+    assert G.dairesel_mi(circ, 100.0, 100.0)
+    i, u, ek = G.baslangic_indeksi_belirle(circ, destek_yonu=(1.0, 1.0))
+    sx = circ[i % len(circ)][0]
+    assert sx > cx                           # sag-ust (x > merkez)
+    i2, u2, e2 = G.baslangic_indeksi_belirle(circ, destek_yonu=(-1.0, 1.0))
+    sx2 = circ[i2 % len(circ)][0]
+    assert sx2 < cx                          # sol-ust (x < merkez)
+
+
 def test_destek_normal_dikdortgeni_bozmaz():
     # Tam destekli dikdortgen: strateji tetiklenmez, sag-ust'te kalir.
     pts = [(0, 0, 0, 0, 0), (100, 0, 0, 0, 0), (100, 80, 0, 0, 0), (0, 80, 0, 0, 0)]
