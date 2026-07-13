@@ -933,16 +933,9 @@ function gcSvg(doc) {
   const kumeUye = {}; noktalar.forEach((p, i) => (kumeUye[kume[i]] = kumeUye[kume[i]] || []).push(i));
   noktalar.forEach((p, i) => {
     const uyeler = kumeUye[kume[i]];
-    let cx = p.cx, cy = p.cy, kumeli = uyeler.length > 1;
-    if (kumeli) {                                    // cakisan -> merkez etrafina yay
-      const mx = uyeler.reduce((a, k) => a + noktalar[k].cx, 0) / uyeler.length;
-      const my = uyeler.reduce((a, k) => a + noktalar[k].cy, 0) / uyeler.length;
-      const k = uyeler.indexOf(i), a = (k / uyeler.length) * 2 * Math.PI;
-      const rr = R * 1.7;
-      cx = mx + rr * Math.cos(a); cy = my + rr * Math.sin(a);
-      ekle(svg, "line", { x1: mx, y1: my, x2: cx, y2: cy, stroke: "#8e8e93",
-        "stroke-width": .8, opacity: .6, "vector-effect": "non-scaling-stroke" });
-    }
+    // Numara HER ZAMAN tam baslangic noktasinda durur (kaydirma YOK). Yakin/
+    // cakisan numaralar yer degistirmez; yalnizca FARKLI RENKLE ayirt edilir.
+    const cx = p.cx, cy = p.cy, kumeli = uyeler.length > 1;
     const secili = sec.has(p.id);
     const cerceve = secili ? "var(--acc)"
       : kumeli ? GC_KUME_RENK[kume[i] % GC_KUME_RENK.length]
