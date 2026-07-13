@@ -892,13 +892,14 @@ function gcSvg(doc) {
     orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="${st.ok}"/></marker>
     <marker id="ok0" markerWidth="7" markerHeight="7" refX="5" refY="3"
     orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="#8e8e93"/></marker>`;
-  const merkez = id => { const b = blokById(doc, id);
-    return b.merkez ? T(b.merkez[0], b.merkez[1]) : T(b.x, b.y); };
+  // Numaralar + tasima yolu dugumleri vektorun BASLANGIC noktasinda (lead-in
+  // / dalis) durur -> numara, kesimin gercekten basladigi yeri gosterir.
+  const bas = id => { const b = blokById(doc, id); return T(b.x, b.y); };
   // ORIJINAL sira katmani (karsilastirma): gri, kesikli
   if (doc.gc.karsilastir) {
     const vo = doc.gc.orijinal.filter(id => vis.includes(id));
     for (let i = 0; i < vo.length - 1; i++) {
-      const [x1, y1] = merkez(vo[i]), [x2, y2] = merkez(vo[i + 1]);
+      const [x1, y1] = bas(vo[i]), [x2, y2] = bas(vo[i + 1]);
       ekle(svg, "line", { x1, y1, x2, y2, stroke: "#8e8e93", "stroke-width": 1.1,
         opacity: .5, "stroke-dasharray": "5 4", "vector-effect": "non-scaling-stroke",
         "marker-end": "url(#ok0)" });
@@ -906,7 +907,7 @@ function gcSvg(doc) {
   }
   // Tasima yolu (gorunur sira boyunca)
   for (let i = 0; i < vis.length - 1; i++) {
-    const [x1, y1] = merkez(vis[i]), [x2, y2] = merkez(vis[i + 1]);
+    const [x1, y1] = bas(vis[i]), [x2, y2] = bas(vis[i + 1]);
     ekle(svg, "line", { x1, y1, x2, y2, stroke: st.ok, "stroke-width": 1.3,
       opacity: Math.min(.6, st.opak), "vector-effect": "non-scaling-stroke", "marker-end": "url(#ok)" });
   }
@@ -918,7 +919,7 @@ function gcSvg(doc) {
   }
   // ---- Numaralar: cakismayi coz + yakin kumeleri farkli renk ----
   const R = 12;
-  const noktalar = vis.map(id => { const [cx, cy] = merkez(id);
+  const noktalar = vis.map(id => { const [cx, cy] = bas(id);
     return { id, poz: doc.gc.sira.indexOf(id), cx, cy }; });
   // Kumeleme: birbirine 2R'den yakin numaralar ayni kumede (union-find benzeri).
   const kume = noktalar.map(() => -1); let nk = 0;
