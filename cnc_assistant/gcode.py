@@ -415,11 +415,59 @@ def _x_araliklari_cakisiyor_mu(b1, b2, x_tol):
     return (x1min - x_tol) <= x2max and (x2min - x_tol) <= x1max
 
 
-def sol_alt_sag_ust_sirala(bloklar):
+def _dongusuz_birlestir(onc_sag, onc_ust, n):
+    """Kritik (onc_sag) ve ikincil (onc_ust) oncelik kenarlarini DONGUSUZ bir
+    graf (DAG) olarak birlestirir. Once TUM kritik kenarlar eklenir; sonra
+    ikincil kenarlardan yalnizca DONGU YARATMAYANLAR eklenir. Doner: her dugum
+    icin oncul kumesi (onculler). Boylece topolojik/acgozlu siralama asla
+    kilitlenmez ve kalan kisitlar birebir uygulanir."""
+    succ = [set() for _ in range(n)]     # succ[u]: u'dan SONRA gelmesi gerekenler
+    onc = [set() for _ in range(n)]      # onc[v]: v'den ONCE gelmesi gerekenler
+
+    def _yol_var(s, t):                  # s -> ... -> t yolu var mi?
+        if s == t:
+            return True
+        yig = [s]
+        gor = {s}
+        while yig:
+            u = yig.pop()
+            for v in succ[u]:
+                if v == t:
+                    return True
+                if v not in gor:
+                    gor.add(v)
+                    yig.append(v)
+        return False
+
+    def _ekle(u, v):                     # u, v'den ONCE (u -> v)
+        if u == v or v in succ[u]:
+            return
+        if _yol_var(v, u):               # ters yol varsa -> dongu -> ATLA
+            return
+        succ[u].add(v)
+        onc[v].add(u)
+
+    for v in range(n):                   # 1) KRITIK kenarlar (onc_sag)
+        for u in onc_sag[v]:
+            _ekle(u, v)
+    for v in range(n):                   # 2) dongu yaratmayan IKINCIL (onc_ust)
+        for u in onc_ust[v]:
+            _ekle(u, v)
+    return onc
+
+
+def sol_alt_sag_ust_sirala(bloklar, ebeveyn=None):
     """VARSAYILAN siralama. Bir CNC USTASI gibi dusunur: malzeme AGIRLIKLI
     olarak SAG ve UST'ten sabitlenir; dolayisiyla bir parca kesilirken
     SAGINDA (ve ustunde) daha once kesilmis bir bosluk OLMAMALIDIR ->
     destek daima korunur. Ayrica yol RASTGELE degil, DUZENLI olmalidir.
+
+    `ebeveyn` verilirse (blok basina, kendisini DOGRUDAN iceren blogun
+    indeksi ya da None) POLIGON-ICERME kisiti da eklenir: her ic kesim
+    (cocuk) kendi dis konturundan (ebeveyn) ONCE kesilir. Boylece icerme
+    tek bir KURESEL eniyilemede destek + ic-ice kurallariyla birlikte
+    ele alinir (parca-parca post-order parcalanmasi -> gereksiz uzun yol
+    sorununu onler).
 
     Iki asamali kurulur:
 
@@ -454,41 +502,71 @@ def sol_alt_sag_ust_sirala(bloklar):
     ort_tol = max(max(gen_x, gen_y) * 1e-3, 1e-9)
     eps = 1e-9
 
-    # ONCELIK GRAFI -- IKI KADEMELI (router destek fizigi). Iki parcanin HANGI
-    # eksende GERCEKTEN ortustugune gore komsuluk turu belirlenir:
-    #   * daha cok Y'de ortusuyorlarsa YATAY komsu -> SAG kisiti (BIRINCIL,
-    #     asla feda edilmez): SOLDAKI once kesilir. Malzeme SAGDAN sabit; bir
-    #     parca kesilirken saginda kesilmis bosluk olmamali (kullanici kurali).
-    #   * daha cok X'te ortusuyorlarsa DUSEY komsu -> UST kisiti (IKINCIL):
-    #     ALTTAKI once kesilir (ust destek).
+    alan = [max((b[2] - b[0]) * (b[3] - b[1]), 0.0) for b in bboxlar]
+
+    # ONCELIK GRAFI. Iki parcanin konumsal iliskisine gore komsuluk turu:
+    #   A) BBOX'lari IC ICE (her iki eksende de ortusuyor: bir parca digerinin
+    #      govdesine/koynuna oturmus) -> KUCUK/ICTEKI once kesilir (BIRINCIL).
+    #      Cunku buyuk parca kesilirse icindeki/koynundaki kucuk parca
+    #      desteksiz kalir (icten-disa mantigi; poligon-icerme testi bu tur
+    #      konkav yerlesimlerde tutmadigi icin bbox-ic-ice ile yakalanir).
+    #      Alanlar ~esitse (kenetlenmis iki benzer parca) ALTTAKI once (ust
+    #      destek) -> IKINCIL.
+    #   B) Yalniz Y'de ortusuyorlar (ayni yatay bant) -> SAG kisiti (BIRINCIL):
+    #      SOLDAKI once. Malzeme SAGDAN sabit; kesilen parcanin saginda
+    #      kesilmis bosluk olmamali.
+    #   C) Yalniz X'te ortusuyorlar (ayni dusey serit) -> UST kisiti (IKINCIL):
+    #      ALTTAKI once.
     # Hicbir eksende gercek ortusme yoksa (capraz) kisit YOK.
-    onc_sag = [set() for _ in range(n)]
-    onc_ust = [set() for _ in range(n)]
+    onc_sag = [set() for _ in range(n)]     # BIRINCIL (kritik) oncelikler
+    onc_ust = [set() for _ in range(n)]     # IKINCIL oncelikler
     for i in range(n):
         bi = bboxlar[i]
         for j in range(i + 1, n):
             bj = bboxlar[j]
             yov = min(bi[3], bj[3]) - max(bi[1], bj[1])   # Y ortusme (>0 gercek)
             xov = min(bi[2], bj[2]) - max(bi[0], bj[0])   # X ortusme (>0 gercek)
-            if yov <= ort_tol and xov <= ort_tol:
-                continue                       # capraz / sadece temas -> kisit yok
-            if yov >= xov:                     # baskin ortusme Y -> YATAY komsu
+            if yov > ort_tol and xov > ort_tol:           # BBOX'lar kesisiyor
+                # ICE-OTURMA orani: ortusme alani / KUCUK bbox alani. ~1 ise
+                # kucuk parca buyugun govdesine/koynuna oturmus (gercek
+                # ic-ice); dusukse yalnizca komsu kenar cakismasi (bitisik
+                # harfler) -> ic-ice DEGIL.
+                ov = yov * xov
+                kucuk_alan = min(alan[i], alan[j])
+                icte = (kucuk_alan > eps and ov / kucuk_alan > 0.80
+                        and min(alan[i], alan[j]) < 0.85 * max(alan[i], alan[j]))
+                if icte:                                   # (A) GERCEK ic-ice
+                    kucuk, buyuk = (i, j) if alan[i] < alan[j] else (j, i)
+                    onc_sag[buyuk].add(kucuk)              # kucuk/icteki once (KRITIK)
+                else:                                      # (B) kenetli/bitisik: alttaki once
+                    dcy = merkez[j][1] - merkez[i][1]
+                    if abs(dcy) > eps:
+                        (onc_ust[j] if dcy > eps else onc_ust[i]).add(
+                            i if dcy > eps else j)
+            elif yov > ort_tol:                            # (C) ayni yatay bant -> SAG
                 dx = merkez[j][0] - merkez[i][0]
-                if yov > ort_tol and abs(dx) > eps:        # SAG: soldaki once
+                if abs(dx) > eps:
                     (onc_sag[j] if dx > eps else onc_sag[i]).add(
                         i if dx > eps else j)
-                elif xov > ort_tol:                        # (Y sliver) -> UST'e dus
-                    dy = merkez[j][1] - merkez[i][1]
-                    if abs(dy) > eps:
-                        (onc_ust[j] if dy > eps else onc_ust[i]).add(
-                            i if dy > eps else j)
-            elif xov > ort_tol:                # baskin ortusme X -> DUSEY komsu
+            elif xov > ort_tol:                            # (D) ayni dusey serit -> UST
                 dy = merkez[j][1] - merkez[i][1]
-                if abs(dy) > eps:                          # UST: alttaki once
+                if abs(dy) > eps:
                     (onc_ust[j] if dy > eps else onc_ust[i]).add(
                         i if dy > eps else j)
 
-    onculler = [onc_sag[i] | onc_ust[i] for i in range(n)]
+    # POLIGON-ICERME (varsa): cocuk (ic kesim) -> ebeveyn (dis kontur), KRITIK.
+    # bbox-ic-ice kurali INCE halkalarda (alanlar cok yakin) tetiklenmeyebilir;
+    # gercek poligon-icerme bunu garantiler.
+    if ebeveyn is not None:
+        for c, p in enumerate(ebeveyn):
+            if p is not None:
+                onc_sag[p].add(c)
+
+    # KISITLARI DONGUSUZ (DAG) BIRLESTIR: once TUM kritik (onc_sag) kenarlar,
+    # sonra dongu YARATMAYAN ikincil (onc_ust) kenarlar. Boylece acgozlu secim
+    # asla kilitlenmez ve kalan tum kisitlar KUSURSUZ uygulanir (kritik kisit
+    # asla feda edilmez; yalnizca dongu kapatan birkac ikincil kenar atlanir).
+    onculler = _dongusuz_birlestir(onc_sag, onc_ust, n)
 
     # Her blogun GIRIS (bas / lead-in) ve CIKIS (son) noktalari; bloklar arasi
     # bosta tasima = onceki blok CIKISI -> sonraki blok GIRISI mesafesi.
@@ -510,11 +588,8 @@ def sol_alt_sag_ust_sirala(bloklar):
     tamam = set()
     sira = []
     while kalan:
-        # 1) hem SAG hem UST kisiti saglanan parcalar (ideal)
-        hazir = [i for i in kalan if onc_sag[i] <= tamam and onc_ust[i] <= tamam]
-        if not hazir:                 # 2) UST dongusu -> UST'u feda et, SAG'i KORU
-            hazir = [i for i in kalan if onc_sag[i] <= tamam]
-        if not hazir:                 # 3) (cok nadir) SAG bile dongulu -> ilerle
+        hazir = [i for i in kalan if onculler[i] <= tamam]
+        if not hazir:                 # (DAG oldugu icin normalde olmaz) -> guvence
             hazir = list(kalan)
         sec = min(hazir, key=lambda i: (giris[i][0] - konum[0]) ** 2
                   + (giris[i][1] - konum[1]) ** 2)
@@ -626,22 +701,39 @@ def destek_simulasyonu(bloklar, tol_orani=0.02):
     # parcalar SAG destek korundugu surece kritik DEGILDIR.
     y_bitisik = max((max(ty) - min(ty)) * 0.03, 1e-9)
 
+    alan = [max((b[2] - b[0]) * (b[3] - b[1]), 0.0) for b in bbox]
+
     ihlaller = []
     for a in range(len(kok)):            # Y: su an kesilen dis kontur
-        for b in range(a):               # X: daha once kesilmis dis kontur
+        for b in range(a):               # X: daha once kesilmis dis kontur (engel)
             yov = min(bbox[a][3], bbox[b][3]) - max(bbox[a][1], bbox[b][1])
             xov = min(bbox[a][2], bbox[b][2]) - max(bbox[a][0], bbox[b][0])
-            if yov <= ort_tol and xov <= ort_tol:
-                continue                                  # capraz -> etkilesim yok
-            if yov >= xov and yov > ort_tol:              # YATAY komsu -> SAG denetimi
+            if yov > ort_tol and xov > ort_tol:           # BBOX'lar kesisiyor
+                ov = yov * xov
+                kucuk_alan = min(alan[a], alan[b])
+                icte = (kucuk_alan > eps and ov / kucuk_alan > 0.80
+                        and min(alan[a], alan[b]) < 0.85 * max(alan[a], alan[b]))
+                if icte:                                  # (A) GERCEK ic-ice
+                    if alan[b] > alan[a]:                 # BUYUK engel once kesilmis
+                        ihlaller.append({
+                            "parca": kok[a] + 1, "engel": kok[b] + 1,
+                            "yon": "ic", "kritik": True,
+                            "aciklama": f"#{kok[b] + 1} (buyuk) once kesildigi icin "
+                                        f"onun koynundaki #{kok[a] + 1} desteksiz kaliyor"})
+                elif mz[b][1] > mz[a][1] + eps:           # (B) kenetli, USTTEKI once
+                    ihlaller.append({
+                        "parca": kok[a] + 1, "engel": kok[b] + 1,
+                        "yon": "ust", "kritik": False,
+                        "aciklama": f"#{kok[b] + 1} ustte ve once kesildigi icin "
+                                    f"#{kok[a] + 1} ust destegi zayifliyor"})
+            elif yov > ort_tol:                           # (B) YATAY komsu -> SAG
                 if mz[b][0] > mz[a][0] + eps:             # X, Y'nin SAGINDA, once kesilmis
-                    # KRITIK: sag clamp'e baglanti kesildi -> parca desteksiz.
                     ihlaller.append({
                         "parca": kok[a] + 1, "engel": kok[b] + 1,
                         "yon": "sag", "kritik": True,
                         "aciklama": f"#{kok[b] + 1} once kesildigi icin "
                                     f"#{kok[a] + 1} SAGDAN desteksiz kaliyor"})
-            elif xov > ort_tol:                           # DUSEY komsu -> UST denetimi
+            elif xov > ort_tol:                           # (C) DUSEY komsu -> UST
                 bosluk = bbox[b][1] - bbox[a][3]          # X.alt - Y.ust
                 if mz[b][1] > mz[a][1] + eps and -ort_tol <= bosluk <= y_bitisik:
                     ihlaller.append({
@@ -751,6 +843,12 @@ def sirala(bloklar, mod="sol-alt"):
     if n == 0:
         return []
     ebeveyn = _direkt_ebeveyn(bloklar)
+
+    # VARSAYILAN (sol-alt): destek + ic-ice + POLIGON-ICERME kisitlarini TEK
+    # kuresel eniyilemede birlikte cozer -> hem kusursuz destek hem kisa yol.
+    if mod not in ("serpantin", "engel"):
+        return sol_alt_sag_ust_sirala(bloklar, ebeveyn)
+
     cocuklar = {i: [] for i in range(n)}
     kokler = []
     for i, p in enumerate(ebeveyn):

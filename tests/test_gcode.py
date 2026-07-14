@@ -206,6 +206,22 @@ def test_destek_simulasyonu_temiz():
     assert krit and krit[0]["yon"] == "sag"
 
 
+def test_ic_ice_kucuk_once_kesilir():
+    """BBOX'i buyuk parcanin icinde kalan (fakat poligon-icerme testinin
+    tutmadigi konkav yerlesim) KUCUK parca, buyuk parcadan ONCE kesilmeli.
+    Buyuk parca 'L' (konkav): bbox 0..100 ama poligonu kucugu icermez."""
+    from cnc_assistant.gcode import sirala, destek_simulasyonu, blok_bbox
+    L = ["G0 X0 Y0", "G1 Z-1", "G1 X100 Y0", "G1 X100 Y40", "G1 X40 Y40",
+         "G1 X40 Y100", "G1 X0 Y100", "G1 X0 Y0", "G0 Z5"]      # L, bbox 0..100
+    kucuk = _kare_blok(60, 60, 80, 80)                          # L'nin koynunda
+    srt = sirala([L, kucuk], "sol-alt")
+    # kucuk parca (20x20) once, buyuk 'L' sonra
+    assert blok_bbox(srt[0]) == (60.0, 60.0, 80.0, 80.0)
+    # ters sira -> KRITIK ihlal (buyuk once -> kucuk desteksiz)
+    krit = [r for r in destek_simulasyonu([L, kucuk]) if r["kritik"]]
+    assert krit and krit[0]["yon"] == "ic"
+
+
 def test_destek_dinamik_stres():
     """Cesitli rasgele yerlesimlerde (izgara, dagynik, dusey yigin, yatay
     sira) siralama SONRASI hicbir parca desteksiz (KRITIK) kalmamali."""
