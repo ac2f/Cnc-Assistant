@@ -64,6 +64,36 @@ def test_akilli_siralama_sol_alttan():
         os.remove(yol)
 
 
+def test_post_processor_footer_korunur():
+    """Post-processor'un sona ekledigi M5 / guvenli-Z90 / eve-don (X0Y0) ve
+    M30, bir kesim blogunun icine KARISMAMALI; footer'da kalmali ve siralama
+    onlari asla ortaya tasimamali. Baslangic ve son hamleler birebir korunur."""
+    icerik = (
+        "T1M6M3\nG4P3\n"
+        "G0X90Y90Z15\nG1Z0\nG1X95Y95\nG0Z15\n"          # kesim 1 (sag-ust)
+        "G0X10Y10\nG1Z0\nG1X15Y15\nG0Z15\n"             # kesim 2 (sol-alt)
+        "M5\nG0Z90.000\nG0X0.000Y0.000M30\n")           # post-processor kuyrugu
+    yol = _yaz(icerik)
+    try:
+        p = gcode.GCodeProgram(yol)
+        assert p.header == ["T1M6M3", "G4P3"]
+        assert p.footer == ["M5", "G0Z90.000", "G0X0.000Y0.000M30"]
+        assert len(p.bloklar) == 2
+        # hicbir kesim blogu M5/M30/Z90/eve-don icermez
+        for b in p.bloklar:
+            metin = " ".join(b)
+            assert "M5" not in metin and "M30" not in metin
+            assert "Z90" not in metin and "X0.000Y0.000" not in metin
+        # siralamadan SONRA da baslangic/son birebir ayni
+        p.auto_sirala()
+        cikti = [s for blk in [p.header] + p.sirali_bloklar() + [p.footer]
+                 for s in blk]
+        assert cikti[:2] == ["T1M6M3", "G4P3"]
+        assert cikti[-3:] == ["M5", "G0Z90.000", "G0X0.000Y0.000M30"]
+    finally:
+        os.remove(yol)
+
+
 def test_g91_guvenlik():
     yol = _yaz("G91\n" + ORNEK)
     try:

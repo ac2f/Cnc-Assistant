@@ -882,6 +882,43 @@ def _retract_ile_bitiyor(blok):
     return False
 
 
+def _blok_kesim_var_mi(blok):
+    """Blokta GERCEK kesim (besleme: G1/G2/G3 hareketi) var mi? Yalnizca
+    hizli (G0) konumlama iceren bloklar (or. post-processor 'eve don'
+    X0Y0, ya da tek basina Z90 guvenli yukselme) KESIM DEGILDIR."""
+    g = None
+    for s in blok:
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if g in (1.0, 2.0, 3.0) and ("X" in w or "Y" in w or "Z" in w):
+            return True
+    return False
+
+
+def _kesim_sonu_idx(blok):
+    """Bloktaki KESIM iceriginin bittigi son satir indeksi: son besleme
+    (G1/G2/G3) hareketinden SONRAKI ilk Z geri-cekme (G0 Z, XY yok). Bundan
+    sonrasi (or. post-processor M5 / G0 Z90 / eve-don) BLOGA AIT DEGILDIR ve
+    footer'a tasinir. Boylece siralama sirasinda program-sonu hamleleri asla
+    bir kesim blogunun icine karisip ortaya tasinmaz."""
+    son_besleme = -1
+    g = None
+    for i, s in enumerate(blok):
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if g in (1.0, 2.0, 3.0) and ("X" in w or "Y" in w or "Z" in w):
+            son_besleme = i
+    if son_besleme < 0:
+        return len(blok) - 1
+    for i in range(son_besleme + 1, len(blok)):
+        w = satir_kelimeleri(blok[i])
+        if w.get("G") == 0.0 and "Z" in w and "X" not in w and "Y" not in w:
+            return i                       # kesimin kendi geri-cekmesi (dahil)
+    return len(blok) - 1
+
+
 # ----------------------------------------------------------------------
 # Program modeli
 # ----------------------------------------------------------------------
@@ -913,33 +950,48 @@ class GCodeProgram:
                 "X-Y iceren G0 hizli hareket bulunamadi; blok tespiti yapilamadi.")
             return
 
-        self.header = satirlar[:bas_idx[0]]
-        bloklar = []
+        self.header = list(satirlar[:bas_idx[0]])
+        ham = []
         for n, bi in enumerate(bas_idx):
             son = bas_idx[n + 1] if n + 1 < len(bas_idx) else len(satirlar)
-            bloklar.append(satirlar[bi:son])
+            ham.append(satirlar[bi:son])
 
-        # Program-sonu satirlarini footer'a tasi (M5/M30/% ve bos satirlar).
-        footer = []
-        son_blok = bloklar[-1]
-        while son_blok:
-            s = son_blok[-1]
-            if _BITIS_RE.search(s) or not s.strip():
-                footer.insert(0, son_blok.pop())
-            else:
-                break
-        bloklar[-1] = son_blok
-        self.footer = footer
+        kesim_mi = [_blok_kesim_var_mi(b) for b in ham]
 
-        # Z-retract ile bitmeyen son blok ortaya tasinirsa kesim derinliginde
-        # yatay hizli hareket olur -> bu blok en sonda sabitlenir.
-        if bloklar and not _retract_ile_bitiyor(bloklar[-1]):
-            self.sabit_son = bloklar.pop()
+        # POST-PROCESSOR KORUMASI: baslangic ve son hamleler ASLA degismez.
+        #  * Bastaki KESIM OLMAYAN bloklar (or. on-konumlama G0 XY) -> HEADER.
+        #  * Sondaki KESIM OLMAYAN bloklar (or. 'eve don' G0 X0Y0, guvenli
+        #    Z90 yukselme, M5/M30) -> FOOTER.
+        #  * Son KESIM blogunun kendi geri-cekmesinden SONRAKI program-sonu
+        #    satirlari (M5 / G0 Z90 / ...) da FOOTER'a tasinir; boylece bir
+        #    kesim blogunun icine karisip siralamada ortaya kaymaz.
+        footer_bloklar = []
+        while ham and not kesim_mi[-1]:
+            footer_bloklar.insert(0, ham.pop())
+            kesim_mi.pop()
+        while ham and not kesim_mi[0]:
+            self.header += ham.pop(0)
+            kesim_mi.pop(0)
+
+        peel = []
+        if ham:
+            son = ham[-1]
+            k = _kesim_sonu_idx(son)
+            if 0 <= k < len(son) - 1:
+                peel = son[k + 1:]
+                ham[-1] = son[:k + 1]
+
+        self.footer = peel + [ln for blk in footer_bloklar for ln in blk]
+
+        # Guvence: (yeni mantiktan sonra normalde olmaz) bir kesim blogu yine
+        # de Z geri-cekme ile bitmiyorsa konumu korunur -> en sonda sabitlenir.
+        if ham and not _retract_ile_bitiyor(ham[-1]):
+            self.sabit_son = ham.pop()
             self.uyarilar.append(
                 "Son blok Z geri cekme ile bitmedigi icin konumu korundu "
                 "(en sonda sabitlendi).")
 
-        self.bloklar = bloklar
+        self.bloklar = ham
 
     # -- siralama ------------------------------------------------------
     def auto_sirala(self, serpantin=False, engel=False):
