@@ -43,9 +43,31 @@ def _kapali_mi_lwpolyline(pl):
 # LWPOLYLINE: node temizligi + baslangic kaydirma
 # ----------------------------------------------------------------------
 
+def _ocs_yon_duzelt(entity, opts):
+    """Varliktaki EXTRUSION Z<0 (aynalanmis OCS) ise yatay yon (dx) TERS
+    cevrilmis bir opts kopyasi doner. LWPOLYLINE/POLYLINE noktalari OCS'de
+    okunur; extrusion (0,0,-1) oldugunda OCS-X ekseni WCS'de aynalidir
+    (WCS_x = -OCS_x). Bu durumda 'sag-ust' kurali OCS'de dogru tarafa denk
+    gelsin diye dx isareti cevrilir (Y degismez). Boylece dis dunyada
+    (gordugumuz cizimde) baslangic DAIMA gercek sag-uste gider -- hicbir
+    yerde ayna bozukluğu kalmaz."""
+    try:
+        ez = entity.dxf.get("extrusion", (0.0, 0.0, 1.0))
+        z = ez[2] if ez is not None else 1.0
+    except Exception:
+        z = 1.0
+    if z < 0:
+        o = dict(opts)
+        d = o.get("destek_yonu", G.DESTEK_YONU) or G.DESTEK_YONU
+        o["destek_yonu"] = (-d[0], d[1])
+        return o
+    return opts
+
+
 def lwpolyline_optimize_et(pl, opts):
     """Kapali LWPOLYLINE icin: once gereksiz node'lari temizler, sonra
     baslangici hedef bolgeye tasir. Doner: (degisti_mi, silinen_node)."""
+    opts = _ocs_yon_duzelt(pl, opts)     # aynali (extrusion Z<0) varliklarda dx ters
     fmt = "xyseb"
     pts = list(pl.get_points(fmt))
 
@@ -94,6 +116,7 @@ def lwpolyline_optimize_et(pl, opts):
 def polyline2d_optimize_et(pl, opts):
     if not pl.is_closed or pl.get_mode() != "AcDb2dPolyline":
         return False, 0
+    opts = _ocs_yon_duzelt(pl, opts)     # aynali (extrusion Z<0) varliklarda dx ters
     vlist = list(pl.vertices)
     if len(vlist) < 3:
         return False, 0
