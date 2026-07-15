@@ -327,7 +327,7 @@ function dxfIcerik(doc) {
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <label class="anahtar"><input type="checkbox" id="d_rapor_ac">
             <span class="kutu"></span> <b>Hata bildir</b> (yanlis baslangicli vektorleri sec)</label>
-          <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → sec; 'baslangici isaretle' ile dogru noktayi tikla.</span>
+          <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → secilir (sari). Dogru baslangic icin: imleci istenen koseye getir ve <b>S</b> tusuna bas (ya da 'baslangici isaretle' ile tikla).</span>
         </div>
         <div id="d_rapor_govde" style="display:none;flex-direction:column;gap:8px">
           <div id="d_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
@@ -1180,17 +1180,33 @@ function zoomEtkinlestir(svg) {
     svg._vb = [cx - (cx - x) * (nw / w), cy - (cy - y) * (nh / h), nw, nh];
     uygula();
   }, { passive: false });
-  let sur = null;
+  // Suruklemeyi ancak imlec belirgin sekilde hareket edince baslat; boylece
+  // basit bir "tik" sirasinda pointer capture alinmaz ve tiklama olayi hedef
+  // parcaya (path) ulasabilir. (Aksi halde capture, click'i SVG'ye yeniden
+  // hedefler ve vektor secimi calismaz.)
+  let sur = null, basim = null, tasindi = false;
   svg.addEventListener("pointerdown", e => {
-    sur = [e.clientX, e.clientY]; svg.setPointerCapture(e.pointerId); });
+    basim = [e.clientX, e.clientY]; sur = [e.clientX, e.clientY];
+    tasindi = false; svg._suruklendi = false; });
   svg.addEventListener("pointermove", e => {
     if (!sur) return;
+    if (!tasindi) {
+      if (Math.abs(e.clientX - basim[0]) + Math.abs(e.clientY - basim[1]) < 4) return;
+      tasindi = true; svg._suruklendi = true;
+      try { svg.setPointerCapture(e.pointerId); } catch (_) {}
+    }
     const [x, y, w, h] = svg._vb, r = svg.getBoundingClientRect();
     svg._vb = [x - (e.clientX - sur[0]) / r.width * w,
                y - (e.clientY - sur[1]) / r.height * h, w, h];
     sur = [e.clientX, e.clientY]; uygula();
   });
-  svg.addEventListener("pointerup", () => { sur = null; });
+  svg.addEventListener("pointerup", e => {
+    sur = null;
+    if (tasindi) { try { svg.releasePointerCapture(e.pointerId); } catch (_) {} }
+    // "click" olayi pointerup'tan hemen sonra (senkron) tetiklenir; bayragi
+    // click isleyicileri okuduktan sonra sifirla.
+    setTimeout(() => { svg._suruklendi = false; }, 0);
+  });
   svg.addEventListener("dblclick", () => { svg._vb = [0, 0, W, H]; uygula(); });
 }
 function ekle(svg, tip, attrs){ const e = document.createElementNS(SVGNS, tip);
@@ -1202,6 +1218,14 @@ function tumBbox(liste){ let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
 function fitDonusum(b, W, H, pad){ const w=Math.max(b[2]-b[0],1e-6),h=Math.max(b[3]-b[1],1e-6);
   const s=Math.min((W-2*pad)/w,(H-2*pad)/h); const ox=(W-s*w)/2,oy=(H-s*h)/2;
   return (x,y)=>[ox+(x-b[0])*s, H-(oy+(y-b[1])*s)]; }
+// Ekran (client) koordinatini tuvalin BAZ piksel uzayina (0..W,0..H) cevirir.
+// viewBox ile zoom/pan yapildigindan bu donusum olmadan olcum zoom'da kayar.
+function ekranToTuval(svg, clientX, clientY){
+  const r = svg.getBoundingClientRect();
+  const vb = svg._vb || [0, 0, r.width || 1, r.height || 1];
+  return [ vb[0] + (clientX - r.left) / (r.width  || 1) * vb[2],
+           vb[1] + (clientY - r.top)  / (r.height || 1) * vb[3] ];
+}
 function yolStr(pts, T){ return pts.map((p,i)=>{ const [x,y]=T(p[0],p[1]);
   return (i?"L":"M")+x.toFixed(1)+" "+y.toFixed(1); }).join(" "); }
 // SVG komut listesini (M/L/Q/C) T ile piksel uzayina cevirip 'd' string uretir.
@@ -1250,7 +1274,14 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
       "vector-effect": "non-scaling-stroke", opacity: (secili||riskli)?.98:.85 });
     if (rapAktif) {
       p.style.cursor = "pointer";
-      p.addEventListener("click", e => { e.stopPropagation(); rapor.onSelect(v.handle); });
+      // Tum sekil govdesi tiklanabilir olsun (fill:none oldugundan sadece ince
+      // cizgi degil, ic alan da) — kolay secim icin.
+      p.setAttribute("pointer-events", "all");
+      p.addEventListener("click", e => {
+        if (svg._suruklendi) return;         // kaydirma (pan) idi, secme
+        if (rapor.isaret) return;            // isaret modunda tuvale birak
+        e.stopPropagation(); rapor.onSelect(v.handle);
+      });
     }
     if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
@@ -1264,22 +1295,58 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
           fill:"#30d158",stroke:"#0a3","stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
     }
   });
-  // Isaretleme modu: tuvale tiklayinca AKTIF parcanin en yakin kontur
-  // noktasina DOGRU baslangici koy.
+  // Hata-bildir modunda: S kisayolu ve isaret tiklamasi icin gerekli guncel
+  // durumu SVG uzerinde sakla (kapanislar bayatlamasin diye her cizimde tazele).
+  if (rapor) {
+    svg._rapor = rapor; svg._T = T; svg._varliklar = varliklar;
+    if (!svg._raporMouse) {           // olaylari bir kez bagla (SVG kaliyor)
+      svg._raporMouse = true;
+      svg.addEventListener("mousemove", e => {
+        svg._mouse = [e.clientX, e.clientY]; svg._hover = true; });
+      svg.addEventListener("mouseenter", () => { svg._hover = true; });
+      svg.addEventListener("mouseleave", () => { svg._hover = false; });
+    }
+  }
+  // Isaretleme modu (buton ile): tuvale tiklayinca AKTIF parcanin en yakin
+  // kontur noktasina DOGRU baslangici koy.
+  if (svg._isaretHandler) {              // onceki isaret isleyicisini temizle
+    svg.removeEventListener("click", svg._isaretHandler); svg._isaretHandler = null; }
   if (rapAktif && rapor.isaret && rapor.aktifHandle != null) {
     svg.style.cursor = "crosshair";
-    svg.addEventListener("click", ev => {
-      const av = varliklar.find(x => x.handle === rapor.aktifHandle); if (!av) return;
-      const r = svg.getBoundingClientRect();
+    const isaretle = ev => {
+      if (svg._suruklendi) return;       // kaydirma idi, isaretleme
+      svg.removeEventListener("click", isaretle); svg._isaretHandler = null;
+      const av = varliklar.find(x => x.handle === rapor.aktifHandle);
+      if (!av) return;
+      const [mx,my] = ekranToTuval(svg, ev.clientX, ev.clientY);
       const koords = komutKoords(av.d);
       let en = null, ed = 1e18;
       koords.forEach(pt => { const [sx,sy]=T(pt[0],pt[1]);
-        const dd=(sx-(ev.clientX-r.left))**2+(sy-(ev.clientY-r.top))**2;
-        if (dd<ed){ed=dd;en=pt;} });
+        const dd=(sx-mx)**2+(sy-my)**2; if (dd<ed){ed=dd;en=pt;} });
       if (en) rapor.onMark(rapor.aktifHandle, [en[0], en[1]]);
-    }, { once:true });
+    };
+    svg._isaretHandler = isaretle;
+    svg.addEventListener("click", isaretle);
   }
   zoomEtkinlestir(svg);
+}
+
+// Hata-bildir modunda: SONRASI onizleme uzerine gelinmisken S tusuna basinca
+// AKTIF (sari) vektorun baslangicini imlece EN YAKIN kontur noktasina ata.
+function dxfSKisayol(){
+  const svg = document.getElementById("svgSonra");
+  if (!svg || !svg._hover || !svg._rapor || !svg._rapor.aktif) return false;
+  const R = svg._rapor;
+  if (R.aktifHandle == null) { bildir("Once bir vektor secin (uzerine tiklayin).", true); return true; }
+  const av = (svg._varliklar || []).find(x => x.handle === R.aktifHandle);
+  if (!av || !svg._mouse) return true;
+  const [mx,my] = ekranToTuval(svg, svg._mouse[0], svg._mouse[1]);
+  let en = null, ed = 1e18;
+  komutKoords(av.d).forEach(pt => { const [sx,sy]=svg._T(pt[0],pt[1]);
+    const dd=(sx-mx)**2+(sy-my)**2; if (dd<ed){ed=dd;en=pt;} });
+  if (en) { R.onMark(R.aktifHandle, [en[0], en[1]]);
+    bildir(`Baslangic isaretlendi: (${en[0].toFixed(1)}, ${en[1].toFixed(1)})`); }
+  return true;
 }
 
 // ===================== toplu isle =====================
@@ -1332,6 +1399,13 @@ function bildir(msg, hata) {
 
 // ===================== klavye kisayollari =====================
 document.addEventListener("keydown", e => {
+  // Plain "S": DXF hata-bildir modunda SONRASI onizleme uzerindeyken aktif
+  // vektorun baslangicini imlece ata (bir yazi alanina yazilmiyorsa).
+  if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const t = e.target;
+    const yazi = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+    if (!yazi && dxfSKisayol()) { e.preventDefault(); return; }
+  }
   const meta = e.ctrlKey || e.metaKey;
   if (!meta) return;
   const doc = aktifDoc();
