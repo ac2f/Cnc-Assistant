@@ -34,6 +34,7 @@ import ezdxf
 from . import dxf_processor as D
 from . import gcode as GC
 from . import geometry as GEO
+from . import rapor as RAPOR
 from . import nesting as NEST
 from . import nesting_nfp as NEST_NFP
 from . import preview as PV
@@ -304,15 +305,79 @@ def api_dxf_onizle(veri):
     }
 
 
+def _cikti_yolu(kaynak, veri, varsayilan_sonek, uzanti):
+    """Cikti dosya yolunu belirler. Oncelik: (1) veri['cikti'] tam yol/ad,
+    (2) veri['dosya_adi'] (yalnizca ad, kaynak klasorde), (3) kaynak koku +
+    veri['onek'] (prefix, varsayilani `varsayilan_sonek`)."""
+    klasor = os.path.dirname(os.path.abspath(kaynak))
+    kok_ad = os.path.splitext(os.path.basename(kaynak))[0]
+    if veri.get("cikti"):
+        return veri["cikti"]
+    ad = (veri.get("dosya_adi") or "").strip()
+    if ad:
+        if not ad.lower().endswith(uzanti):
+            ad += uzanti
+        return os.path.join(klasor, os.path.basename(ad))
+    onek = veri.get("onek", varsayilan_sonek)
+    return os.path.join(klasor, f"{kok_ad}{onek}{uzanti}")
+
+
 def api_dxf_kaydet(veri):
-    """Onizlenen (bellekteki) optimize DXF'i diske kaydeder."""
+    """Onizlenen (bellekteki) optimize DXF'i diske kaydeder. Cikti adi
+    prefix (onek) veya tam ad (dosya_adi) ile belirlenebilir."""
     yol = veri["yol"]
     if yol not in _DXF_DOC:
         return {"hata": "Once onizleyin."}
-    kok, _ = os.path.splitext(yol)
-    cikti = veri.get("cikti") or f"{kok}_optimized.dxf"
+    cikti = _cikti_yolu(yol, veri, "_optimized", ".dxf")
     _DXF_DOC[yol].saveas(cikti)
-    return {"cikti": cikti}
+    _INDIRILEBILIR.add(os.path.abspath(cikti))
+    return {"cikti": cikti,
+            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+
+def api_dxf_rapor(veri):
+    """Arayuzde secilen HATALI vektorleri makine-okunur JSON hata raporuna
+    cikarir (diske yazar, indirme linki doner). secimler: [{handle,
+    dogru_baslangic:[x,y]|null, not:str}]."""
+    yol = veri["yol"]
+    if yol not in _DXF_ONIZLE and not os.path.isfile(yol):
+        return {"hata": "Once onizleyin."}
+    o = _DXF_ONIZLE.get(yol)
+    if o is None:
+        s = D.optimize_doc(yol, _dxf_opts(veri))
+        o = {"sonrasi": s["sonrasi"]}
+    birim = None
+    try:
+        birim = D.ezdxf.readfile(yol).header.get("$INSUNITS")
+    except Exception:
+        pass
+    rp = RAPOR.dxf_rapor(os.path.basename(yol), birim,
+                         [_varlik_json(v) for v in o["sonrasi"]],
+                         veri.get("secimler", []), veri.get("genel_not", ""))
+    cikti = _cikti_yolu(yol, veri, "_hata_raporu", ".json")
+    with open(cikti, "w", encoding="utf-8") as f:
+        json.dump(rp, f, ensure_ascii=False, indent=2)
+    _INDIRILEBILIR.add(os.path.abspath(cikti))
+    return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
+            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+
+def api_gcode_rapor(veri):
+    """Arayuzde secilen HATALI kesim bloklarini makine-okunur JSON hata
+    raporuna cikarir. secimler: [{sira, dogru_sira:int|null, not:str}]."""
+    yol = veri["yol"]
+    if yol not in _DURUM:
+        return {"hata": "Once dosyayi yukleyin."}
+    d = _DURUM[yol]
+    ozet = _ozet_bloklar(d["orijinal"])
+    rp = RAPOR.gcode_rapor(os.path.basename(yol), d["prog"].birim, ozet,
+                           veri.get("secimler", []), veri.get("genel_not", ""))
+    cikti = _cikti_yolu(yol, veri, "_hata_raporu", ".json")
+    with open(cikti, "w", encoding="utf-8") as f:
+        json.dump(rp, f, ensure_ascii=False, indent=2)
+    _INDIRILEBILIR.add(os.path.abspath(cikti))
+    return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
+            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
 
 
 def api_gcode_yukle(veri):
@@ -385,11 +450,12 @@ def api_gcode_kaydet(veri):
     d = _DURUM[yol]
     sira = veri["sira"]
     d["prog"].bloklar = [d["orijinal"][i] for i in sira]
-    kok, _ = os.path.splitext(yol)
-    cikti = veri.get("cikti") or f"{kok}_reordered.tap"
+    cikti = _cikti_yolu(yol, veri, "_reordered", ".tap")
     d["prog"].yaz(cikti)
+    _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti, "ihlaller": d["prog"].icerme_ihlalleri(),
-            "bosta_yol": d["prog"].bosta_yol()}
+            "bosta_yol": d["prog"].bosta_yol(),
+            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
 
 
 _ONIZ_FORMATLAR = {"pdf", "png", "svg"}
@@ -610,6 +676,8 @@ API = {
     "/api/yeniden_adlandir": api_yeniden_adlandir,
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
+    "/api/dxf/rapor": api_dxf_rapor,
+    "/api/gcode/rapor": api_gcode_rapor,
     "/api/dxf/pdf": api_dxf_pdf,
     "/api/dxf/onizleme": api_dxf_onizleme,
     "/api/dxf/nest": api_dxf_nest,

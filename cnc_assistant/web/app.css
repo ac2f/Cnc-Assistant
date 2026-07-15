@@ -349,3 +349,11 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
 .ozet-tablo{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
 .ozet-tablo th,.ozet-tablo td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--cizgi)}
 .ozet-tablo th{color:var(--metin2);font-weight:600}
+
+/* Hata bildir (rapor) satirlari */
+.rrow{background:var(--yuzey2,rgba(127,127,127,.07));border:1px solid var(--kenar);
+  border-radius:8px;padding:7px 9px;display:flex;flex-direction:column;gap:6px}
+.rrow.aktif{border-color:#ff9f0a;box-shadow:0 0 0 1px #ff9f0a inset}
+.rrow .rr1{font-size:13px}
+.rrow .rr2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.rrow .ok{color:#30d158}

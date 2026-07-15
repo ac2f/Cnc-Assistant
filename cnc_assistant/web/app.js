@@ -290,6 +290,8 @@ function dxfIcerik(doc) {
         <div style="flex:1"></div>
         <button class="dugme hayalet" id="d_ayarAc">Onizleme ayarlari ▾</button>
         <button class="dugme hayalet" id="d_yeniden">Yeniden Isle</button>
+        <div class="grup"><label>Kayit adi (bos=önek)</label>
+          <input type="text" class="alan kk" id="d_kayit_ad" placeholder="${(v.dosya_kok||'')}_optimized.dxf" style="width:200px"></div>
         <button class="dugme" id="d_kaydet">Optimize DXF'i Kaydet</button>
       </div>
       <div class="arac" id="d_onizAyar" style="margin-top:10px;flex-wrap:wrap;gap:14px;display:none">
@@ -320,6 +322,22 @@ function dxfIcerik(doc) {
         <button class="dugme hayalet" id="d_ind_sonra">Sonrasi</button>
         <button class="dugme" id="d_ind_birlikte">Birlikte</button>
         <div style="flex:1"></div>
+      </div>
+      <div class="arac" id="d_rapor_kutu" style="margin-top:10px;flex-direction:column;align-items:stretch;gap:8px;border-top:1px solid var(--kenar);padding-top:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <label class="anahtar"><input type="checkbox" id="d_rapor_ac">
+            <span class="kutu"></span> <b>Hata bildir</b> (yanlis baslangicli vektorleri sec)</label>
+          <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → sec; 'baslangici isaretle' ile dogru noktayi tikla.</span>
+        </div>
+        <div id="d_rapor_govde" style="display:none;flex-direction:column;gap:8px">
+          <div id="d_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <input type="text" class="alan kk" id="d_rapor_not" placeholder="genel not (ops.)" style="flex:1;min-width:160px">
+            <input type="text" class="alan kk" id="d_rapor_ad" placeholder="rapor adi (bos=önek)" style="width:200px">
+            <button class="dugme" id="d_rapor_indir">Hata raporu indir (.json)</button>
+          </div>
+          <div id="d_rapor_durum" class="kk2"></div>
+        </div>
       </div>
       <div class="arac" style="margin-top:12px;align-items:center">
         <div class="grup"><label>Nesting tabaka genisligi (0 = otomatik)</label>
@@ -395,10 +413,21 @@ function dxfIcerik(doc) {
     $("d_ind_sonra").onclick = () => onizIndir("sonrasi");
     $("d_ind_birlikte").onclick = () => onizIndir("birlikte");
     $("d_kaydet").onclick = async () => {
-      const r = await api("/api/dxf/kaydet", { yol: doc.yol });
+      const ad = $("d_kayit_ad") ? $("d_kayit_ad").value.trim() : "";
+      const r = await api("/api/dxf/kaydet", { yol: doc.yol, dosya_adi: ad || undefined });
       $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`
         : `<span class="ok">Kaydedildi:</span> ${r.cikti}`;
     };
+    // ---- Hata bildir (rapor) modu ----
+    doc.rapor = doc.rapor || { aktif:false, secim:new Map(), aktifHandle:null, isaret:false };
+    $("d_rapor_ac").onchange = e => {
+      doc.rapor.aktif = e.target.checked;
+      $("d_rapor_govde").style.display = e.target.checked ? "flex" : "none";
+      dxfCiz(doc); dxfRaporListe(doc);
+    };
+    $("d_rapor_indir").onclick = () => dxfRaporIndir(doc);
+    if (doc.rapor.aktif) { $("d_rapor_ac").checked = true;
+      $("d_rapor_govde").style.display = "flex"; dxfRaporListe(doc); }
     $("d_nest").onclick = async () => {
       $("d_durum").innerHTML = `<span class="yukleniyor"></span> Yerlestiriliyor…`;
       const r = await api("/api/dxf/nest", { yol: doc.yol,
@@ -420,9 +449,61 @@ function dxfIcerik(doc) {
 
 function dxfCiz(doc) {
   const v = doc.veri; if (v.hata) return;
+  doc.rapor = doc.rapor || { aktif:false, secim:new Map(), aktifHandle:null, isaret:false };
+  const R = doc.rapor;
+  R.onSelect = h => {
+    if (R.secim.has(h)) { R.secim.delete(h); if (R.aktifHandle===h) R.aktifHandle=null; }
+    else { R.secim.set(h, { dogru:null, not:"" }); R.aktifHandle = h; }
+    dxfCiz(doc); dxfRaporListe(doc);
+  };
+  R.onMark = (h, xy) => { const d = R.secim.get(h); if (d){ d.dogru = xy; } R.isaret=false;
+    dxfCiz(doc); dxfRaporListe(doc); };
   cizVarliklar("svgOnce", v.oncesi, [], true);
-  cizVarliklar("svgSonra", v.sonrasi, v.riskli_handlelar, true);
+  cizVarliklar("svgSonra", v.sonrasi, v.riskli_handlelar, true, R);
   dxfGecmisCiz(doc);
+}
+
+// Secilen hatali vektorlerin listesi (id, mevcut/dogru baslangic, not).
+function dxfRaporListe(doc) {
+  const kap = $("d_rapor_liste"); if (!kap) return;
+  const R = doc.rapor, vs = (doc.veri.sonrasi||[]);
+  if (!R.secim.size) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Henuz secim yok — SAGDAKI onizlemede hatali vektore tiklayin.</div>`; return; }
+  let h = "";
+  R.secim.forEach((d, handle) => {
+    const v = vs.find(x => x.handle === handle);
+    const bas = v && v.baslangic ? `(${v.baslangic[0].toFixed(1)}, ${v.baslangic[1].toFixed(1)})` : "—";
+    const dog = d.dogru ? `(${d.dogru[0].toFixed(1)}, ${d.dogru[1].toFixed(1)})` : "—";
+    const akt = R.aktifHandle === handle;
+    h += `<div class="rrow ${akt?'aktif':''}" data-h="${handle}">
+      <div class="rr1"><b>#${handle}</b> mevcut ${bas} → dogru <span class="${d.dogru?'ok':''}">${dog}</span></div>
+      <div class="rr2">
+        <button class="dugme hayalet kucuk" data-akt="${handle}">${akt&&R.isaret?'nokta sec…':'baslangici isaretle'}</button>
+        <input class="alan kk" data-not="${handle}" placeholder="not (ops.)" value="${(d.not||'').replace(/"/g,'&quot;')}" style="flex:1;min-width:120px">
+        <button class="dugme hayalet kucuk" data-sil="${handle}">✕</button>
+      </div></div>`;
+  });
+  kap.innerHTML = h;
+  kap.querySelectorAll("[data-akt]").forEach(b => b.onclick = () => {
+    R.aktifHandle = b.dataset.akt; R.isaret = true; dxfCiz(doc); dxfRaporListe(doc); });
+  kap.querySelectorAll("[data-sil]").forEach(b => b.onclick = () => {
+    R.secim.delete(b.dataset.sil); if (R.aktifHandle===b.dataset.sil) R.aktifHandle=null;
+    dxfCiz(doc); dxfRaporListe(doc); });
+  kap.querySelectorAll("[data-not]").forEach(inp => inp.onchange = () => {
+    const d = R.secim.get(inp.dataset.not); if (d) d.not = inp.value; });
+}
+
+async function dxfRaporIndir(doc) {
+  const R = doc.rapor;
+  if (!R.secim.size) { alert("Once hatali vektorleri secin."); return; }
+  const secimler = [];
+  R.secim.forEach((d, handle) => secimler.push({ handle, dogru_baslangic:d.dogru, not:d.not }));
+  const gnot = ($("d_rapor_not") && $("d_rapor_not").value) || "";
+  const ad = ($("d_rapor_ad") && $("d_rapor_ad").value.trim()) || "";
+  const r = await api("/api/dxf/rapor", { yol: doc.yol, secimler, genel_not: gnot,
+    dosya_adi: ad || undefined });
+  if (r.hata) { alert(r.hata); return; }
+  $("d_rapor_durum").innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}`;
+  window.location.href = r.indir;
 }
 
 // DXF onizleme gecmisi (her "Yeniden Isle" / "Nesting" bir adim ekler)
@@ -482,6 +563,7 @@ function gcodeIcerik(doc) {
         <button class="dugme hayalet kucuk" id="g_goster">Goster</button>
         <div style="flex:1"></div>
         <span class="birim-cip">${g.birim ? g.birim : "birim?"}</span>
+        <input type="text" class="alan kk" id="g_kayit_ad" placeholder="kayit adi (bos=önek)" style="width:180px">
         <button class="dugme" id="g_kaydet">Kaydet (.tap)</button>
       </div>
       <div class="cipler" id="g_karsilastir"></div>
@@ -499,6 +581,19 @@ function gcodeIcerik(doc) {
           <svg class="tuval" id="svgGc"></svg>
           <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
           <div class="durum" id="g_durum"></div>
+          <div id="g_rapor_kutu" style="margin-top:8px;border-top:1px solid var(--kenar);padding-top:8px">
+            <label class="anahtar"><input type="checkbox" id="g_rapor_ac">
+              <span class="kutu"></span> <b>Hata bildir</b> (yanlis sirali bloklari sec — Ctrl+tık)</label>
+            <div id="g_rapor_govde" style="display:none;flex-direction:column;gap:8px;margin-top:8px">
+              <div id="g_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
+              <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                <input type="text" class="alan kk" id="g_rapor_not" placeholder="genel not (ops.)" style="flex:1;min-width:150px">
+                <input type="text" class="alan kk" id="g_rapor_ad" placeholder="rapor adi (bos=önek)" style="width:180px">
+                <button class="dugme" id="g_rapor_indir">Hata raporu indir (.json)</button>
+              </div>
+              <div id="g_rapor_durum" class="kk2"></div>
+            </div>
+          </div>
           <div class="gecmis-serit" id="g_gecmis"></div>
         </div>
       </div>
@@ -519,6 +614,11 @@ function gcodeIcerik(doc) {
       AYAR.yaz("tabAdet", doc.gc.tabAdet); if (doc.gc.tabAcik) { await gcTablariGetir(doc); gcCiz(doc, true); } };
     $("g_goster").onclick = () => gcCiz(doc, true);
     $("g_kaydet").onclick = () => gcKaydet(doc);
+    doc.gc.rapor = doc.gc.rapor || { aktif:false, notlar:new Map() };
+    $("g_rapor_ac").onchange = e => { doc.gc.rapor.aktif = e.target.checked;
+      $("g_rapor_govde").style.display = e.target.checked ? "flex" : "none";
+      if (e.target.checked) gcRaporListe(doc); };
+    $("g_rapor_indir").onclick = () => gcRaporIndir(doc);
     gcKarsilastirCiz(doc);
     gcGecmisCiz(doc);
     gcGrupCiz(doc);
@@ -628,6 +728,7 @@ function gcGrupCiz(doc) {
   $("gg_asa").onclick = () => gcGrupKaydir(doc, +1);
   $("gg_ters").onclick = () => gcTersCevir(doc);
   $("gg_sil").onclick = () => gcSecSil(doc);
+  if (doc.gc.rapor && doc.gc.rapor.aktif) gcRaporListe(doc);
 }
 
 // ---- Takim yolu bilgisi + tahmini sure ----
@@ -742,13 +843,57 @@ function gcGecmisCiz(doc) {
 }
 
 async function gcKaydet(doc) {
-  const s = await api("/api/gcode/kaydet", { yol: doc.yol, sira: doc.gc.sira });
+  const ad = $("g_kayit_ad") ? $("g_kayit_ad").value.trim() : "";
+  const s = await api("/api/gcode/kaydet", { yol: doc.yol, sira: doc.gc.sira,
+    dosya_adi: ad || undefined });
   const d = $("g_durum");
   if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`; return; }
   let m = `<span class="ok">Kaydedildi:</span> ${s.cikti} · bosta yol: <b>${s.bosta_yol.toFixed(1)}</b>`;
   if (s.ihlaller && s.ihlaller.length)
     m += `<br><span class="uyari">UYARI: ${s.ihlaller.length} icerme ihlali.</span>`;
   d.innerHTML = m;
+}
+
+// Secilen (Ctrl+tık) hatali bloklarin listesi: mevcut sira + not + istenen sira.
+function gcRaporListe(doc) {
+  const kap = $("g_rapor_liste"); if (!kap) return;
+  const sec = [...doc.gc.secim];
+  if (!sec.length) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Onizlemede Ctrl+tık ile hatali bloklari secin.</div>`; return; }
+  const R = doc.gc.rapor;
+  let h = "";
+  sec.forEach(id => {
+    const poz = doc.gc.sira.indexOf(id) + 1;
+    const kayit = R.notlar.get(id) || {};
+    h += `<div class="rrow" data-id="${id}">
+      <div class="rr1"><b>#${poz}</b> (blok ${id + 1})</div>
+      <div class="rr2">
+        <input class="alan kk" data-dsira="${id}" type="number" min="1" placeholder="dogru sira" value="${kayit.dogru_sira||''}" style="width:110px">
+        <input class="alan kk" data-gnot="${id}" placeholder="not (ops.)" value="${(kayit.not||'').replace(/"/g,'&quot;')}" style="flex:1;min-width:120px">
+      </div></div>`;
+  });
+  kap.innerHTML = h;
+  kap.querySelectorAll("[data-dsira]").forEach(inp => inp.onchange = () => {
+    const id = +inp.dataset.dsira; const k = R.notlar.get(id) || {};
+    k.dogru_sira = inp.value ? parseInt(inp.value) : null; R.notlar.set(id, k); });
+  kap.querySelectorAll("[data-gnot]").forEach(inp => inp.onchange = () => {
+    const id = +inp.dataset.gnot; const k = R.notlar.get(id) || {};
+    k.not = inp.value; R.notlar.set(id, k); });
+}
+
+async function gcRaporIndir(doc) {
+  const sec = [...doc.gc.secim];
+  if (!sec.length) { alert("Once hatali bloklari secin (Ctrl+tık)."); return; }
+  const R = doc.gc.rapor;
+  const secimler = sec.map(id => { const k = R.notlar.get(id) || {};
+    return { id, mevcut_sira: doc.gc.sira.indexOf(id) + 1,
+             dogru_sira: k.dogru_sira || null, not: k.not || "" }; });
+  const gnot = ($("g_rapor_not") && $("g_rapor_not").value) || "";
+  const ad = ($("g_rapor_ad") && $("g_rapor_ad").value.trim()) || "";
+  const r = await api("/api/gcode/rapor", { yol: doc.yol, secimler, genel_not: gnot,
+    dosya_adi: ad || undefined });
+  if (r.hata) { alert(r.hata); return; }
+  $("g_rapor_durum").innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}`;
+  window.location.href = r.indir;
 }
 
 async function gcCiz(doc, zorla) {
@@ -1088,23 +1233,52 @@ function komutKoords(cmds){
 function izgara(svg, W, H){ const ad = 40;
   for (let x=0;x<=W;x+=ad) ekle(svg,"line",{x1:x,y1:0,x2:x,y2:H,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4});
   for (let y=0;y<=H;y+=ad) ekle(svg,"line",{x1:0,y1:y,x2:W,y2:y,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4}); }
-function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster){
+function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   const svg = $(svgId); if (!svg) return; svgKur(svg);
   const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
   const tum = []; varliklar.forEach(v => komutKoords(v.d).forEach(p => tum.push(p)));
   const T = fitDonusum(tumBbox([tum]), W, H, 26);
   izgara(svg, W, H);
   const rs = new Set(riskliHandlelar || []);
+  const rapAktif = rapor && rapor.aktif;
   varliklar.forEach(v => {
     const riskli = rs.has(v.handle);
-    ekle(svg, "path", { d: komutYol(v.d, T, v.kapali), fill:"none",
-      stroke: riskli ? "#ff3b30" : "var(--acc)", "stroke-width": riskli?2:1.3,
-      "vector-effect": "non-scaling-stroke", opacity: riskli?.95:.85 });
+    const secili = rapAktif && rapor.secim.has(v.handle);
+    const p = ekle(svg, "path", { d: komutYol(v.d, T, v.kapali), fill:"none",
+      stroke: secili ? "#ff9f0a" : (riskli ? "#ff3b30" : "var(--acc)"),
+      "stroke-width": (secili||riskli)?2.2:1.3,
+      "vector-effect": "non-scaling-stroke", opacity: (secili||riskli)?.98:.85 });
+    if (rapAktif) {
+      p.style.cursor = "pointer";
+      p.addEventListener("click", e => { e.stopPropagation(); rapor.onSelect(v.handle); });
+    }
     if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
         fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)",
         "stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
+    // Kullanicinin isaretledigi DOGRU baslangic (yesil elmas)
+    if (rapAktif && secili) {
+      const d = rapor.secim.get(v.handle);
+      if (d && d.dogru) { const [mx,my]=T(d.dogru[0],d.dogru[1]);
+        ekle(svg,"rect",{x:mx-5,y:my-5,width:10,height:10,transform:`rotate(45 ${mx} ${my})`,
+          fill:"#30d158",stroke:"#0a3","stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
+    }
   });
+  // Isaretleme modu: tuvale tiklayinca AKTIF parcanin en yakin kontur
+  // noktasina DOGRU baslangici koy.
+  if (rapAktif && rapor.isaret && rapor.aktifHandle != null) {
+    svg.style.cursor = "crosshair";
+    svg.addEventListener("click", ev => {
+      const av = varliklar.find(x => x.handle === rapor.aktifHandle); if (!av) return;
+      const r = svg.getBoundingClientRect();
+      const koords = komutKoords(av.d);
+      let en = null, ed = 1e18;
+      koords.forEach(pt => { const [sx,sy]=T(pt[0],pt[1]);
+        const dd=(sx-(ev.clientX-r.left))**2+(sy-(ev.clientY-r.top))**2;
+        if (dd<ed){ed=dd;en=pt;} });
+      if (en) rapor.onMark(rapor.aktifHandle, [en[0], en[1]]);
+    }, { once:true });
+  }
   zoomEtkinlestir(svg);
 }
 
