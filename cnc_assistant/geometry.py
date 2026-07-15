@@ -91,6 +91,11 @@ MIN_DESTEK_DERINLIK_ORANI = 0.20
 # sivri tepe (orn. yan yatik "A"nin ucu) yerine genis/duz ust kenar secilir.
 UST_GENIS_TOLERANS = 0.70
 
+# "Yorumlanan vektor": ust bant'taki en genis ust bolge, parca genisliginin bu
+# oranindan DAR ise (L'nin sapi, "A"nin ucu, ince sivri tepe) baslangic oraya
+# konmaz; bant asagi genisletilip GENIS/destekli govdenin ust kenari yakalanir.
+GENIS_GOVDE_ORANI = 0.45
+
 # Cok uzun (kirmizi-onizleme/riskli) YATAY serit parcalarda baslangicin ust
 # kontur uzerindeki yatay konumu (soldan): sag-uste yakin (elle-optimize ~0.89).
 YATAY_SERIT_X_ORANI = 0.88
@@ -795,6 +800,22 @@ def _baslangic_hedef_nokta(pts, **kw):
     # 2) Gercek ust bolgeler (ust bant kosulari).
     band = kw.get("ust_bant_orani", UST_BANT_ORANI)
     kosular = ust_kosular(pts, ymax - band * h, w) if h > 1e-12 else []
+    # YORUMLANAN VEKTOR: ust bant'taki en genis bolge DAR bir cikinti/tepe ise
+    # (L sapi, "A" ucu, ince sivri tepe) baslangic oraya OTURMAZ; bant asagi
+    # genisletilip GENIS ve destekli govdenin ust kenari yakalanir. Boylece
+    # baslangic ince tepede degil, genis govdenin sag-ust kenarinda olur.
+    if kosular and h > 1e-12:
+        genis_esik = kw.get("genis_govde_orani", GENIS_GOVDE_ORANI) * w
+        en_g = max(kosular, key=lambda ab: ab[1] - ab[0])
+        if (en_g[1] - en_g[0]) < genis_esik:
+            for ek in (0.20, 0.35, 0.55, 0.80):
+                alt = ust_kosular(pts, ymax - min(band + ek, 0.95) * h, w)
+                if not alt:
+                    continue
+                g = max(alt, key=lambda ab: ab[1] - ab[0])
+                if (g[1] - g[0]) >= genis_esik:
+                    kosular = alt
+                    break
     if not kosular:
         # Destek yonune gore ust kenarda (varsayilan SAG-UST) konumla.
         if dx > 0.05:
