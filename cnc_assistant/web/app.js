@@ -1254,6 +1254,80 @@ function komutKoords(cmds){
   }
   return pts;
 }
+// --- Hata-bildir modu: geometrik isabet testi yardimcilari ---
+// Vektorun (M/L/Q/C) yaklasik kapali polyline'i; egriler orneklenir.
+// Boylece hem "iceriyor mu" hem "kenara mesafe" testleri egri govdeyi izler.
+function vektorPolyline(cmds){
+  const pts=[]; let cur=null;
+  for (const c of cmds){
+    const k=c[0];
+    if (k==="M"||k==="L"){ cur=[c[1],c[2]]; pts.push(cur); }
+    else if (k==="Q"){ const p0=cur||[c[1],c[2]], cx=c[1],cy=c[2],x=c[3],y=c[4];
+      for (let i=1;i<=8;i++){ const t=i/8, mt=1-t;
+        pts.push([mt*mt*p0[0]+2*mt*t*cx+t*t*x, mt*mt*p0[1]+2*mt*t*cy+t*t*y]); }
+      cur=[x,y]; }
+    else if (k==="C"){ const p0=cur||[c[1],c[2]], c1x=c[1],c1y=c[2],c2x=c[3],c2y=c[4],x=c[5],y=c[6];
+      for (let i=1;i<=10;i++){ const t=i/10, mt=1-t,
+        a=mt*mt*mt, b=3*mt*mt*t, d=3*mt*t*t, e2=t*t*t;
+        pts.push([a*p0[0]+b*c1x+d*c2x+e2*x, a*p0[1]+b*c1y+d*c2y+e2*y]); }
+      cur=[x,y]; }
+  }
+  return pts;
+}
+function poligonAlan(pts){ let a=0; const n=pts.length; if(n<3) return 0;
+  for (let i=0;i<n;i++){ const [x1,y1]=pts[i],[x2,y2]=pts[(i+1)%n];
+    a += x1*y2 - x2*y1; } return Math.abs(a)/2; }
+function noktaIcinde(pts, x, y){ let ic=false; const n=pts.length;
+  for (let i=0,j=n-1;i<n;j=i++){ const [xi,yi]=pts[i],[xj,yj]=pts[j];
+    if (((yi>y)!==(yj>y)) &&
+        (x < (xj-xi)*(y-yi)/((yj-yi)||1e-12)+xi)) ic=!ic; }
+  return ic; }
+function noktaSegMesafe(px,py,ax,ay,bx,by){
+  const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+  let t = l2 ? ((px-ax)*dx+(py-ay)*dy)/l2 : 0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(ax+t*dx), py-(ay+t*dy)); }
+function poligonMesafe(pts, x, y){ let m=1e18; const n=pts.length;
+  for (let i=0;i<n;i++){ const [ax,ay]=pts[i],[bx,by]=pts[(i+1)%n];
+    const d=noktaSegMesafe(x,y,ax,ay,bx,by); if(d<m)m=d; } return m; }
+// En distaki (tum digerlerini iceren, en genis) konturu bul. Bu kontur
+// genellikle "tabaka olcusu" referansidir; secilebilir adaylardan cikarilir.
+// Tek vektor varsa (referans yok) null doner.
+function enDisVektor(varliklar){
+  if (!varliklar || varliklar.length < 2) return null;
+  const polys = varliklar.map(v => vektorPolyline(v.d));
+  let bi=0, ba=poligonAlan(polys[0]);
+  for (let i=1;i<polys.length;i++){ const a=poligonAlan(polys[i]);
+    if (a>ba){ ba=a; bi=i; } }
+  const big = polys[bi];
+  const hepsi = polys.every((p,i) => i===bi || (p.length>0 &&
+    noktaIcinde(big, p[0][0], p[0][1])));
+  return hepsi ? varliklar[bi].handle : null;
+}
+// Tiklama noktasina gore secilecek vektorun handle'i (yoksa null):
+//  - en distaki (tabaka) kontur hicbir zaman secilmez
+//  - kontur cizgisine cok yakinsa o kontur
+//  - degilse tiklamayi iceren EN KUCUK (en icteki) kontur
+function dxfSecimAdayi(svg, clientX, clientY){
+  const varliklar = svg._varliklar || [], T = svg._T; if (!T) return null;
+  const disH = svg._disHandle;
+  const [cx,cy] = ekranToTuval(svg, clientX, clientY);
+  const bilgi = [];
+  varliklar.forEach(v => {
+    if (v.handle === disH) return;                 // tabaka siniri: atla
+    const px = vektorPolyline(v.d).map(p => T(p[0], p[1]));
+    bilgi.push({ h:v.handle, alan:poligonAlan(px),
+      mesafe:poligonMesafe(px,cx,cy), icerir:noktaIcinde(px,cx,cy) });
+  });
+  if (!bilgi.length) return null;
+  const ESIK = 8;                                  // "cizgiye tiklama" esigi (px)
+  let yakin=null;
+  bilgi.forEach(o => { if (o.mesafe<=ESIK && (!yakin || o.mesafe<yakin.mesafe ||
+    (o.mesafe===yakin.mesafe && o.alan<yakin.alan))) yakin=o; });
+  if (yakin) return yakin.h;
+  let ic=null;
+  bilgi.forEach(o => { if (o.icerir && (!ic || o.alan<ic.alan)) ic=o; });
+  return ic ? ic.h : null;
+}
 function izgara(svg, W, H){ const ad = 40;
   for (let x=0;x<=W;x+=ad) ekle(svg,"line",{x1:x,y1:0,x2:x,y2:H,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4});
   for (let y=0;y<=H;y+=ad) ekle(svg,"line",{x1:0,y1:y,x2:W,y2:y,stroke:"var(--cizgi)","stroke-width":.5,opacity:.4}); }
@@ -1265,24 +1339,24 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   izgara(svg, W, H);
   const rs = new Set(riskliHandlelar || []);
   const rapAktif = rapor && rapor.aktif;
+  // En distaki (tabaka olcusu) kontur: secilemez; svg'de sakla ki isabet
+  // testi (dxfSecimAdayi) onu adaylardan cikarsin.
+  const disH = rapAktif ? enDisVektor(varliklar) : null;
+  svg._disHandle = disH;
   varliklar.forEach(v => {
     const riskli = rs.has(v.handle);
     const secili = rapAktif && rapor.secim.has(v.handle);
-    const p = ekle(svg, "path", { d: komutYol(v.d, T, v.kapali), fill:"none",
+    const dis = rapAktif && v.handle === disH;   // secilemeyen dis sinir
+    const attr = { d: komutYol(v.d, T, v.kapali), fill:"none",
       stroke: secili ? "#ff9f0a" : (riskli ? "#ff3b30" : "var(--acc)"),
       "stroke-width": (secili||riskli)?2.2:1.3,
-      "vector-effect": "non-scaling-stroke", opacity: (secili||riskli)?.98:.85 });
-    if (rapAktif) {
-      p.style.cursor = "pointer";
-      // Tum sekil govdesi tiklanabilir olsun (fill:none oldugundan sadece ince
-      // cizgi degil, ic alan da) — kolay secim icin.
-      p.setAttribute("pointer-events", "all");
-      p.addEventListener("click", e => {
-        if (svg._suruklendi) return;         // kaydirma (pan) idi, secme
-        if (rapor.isaret) return;            // isaret modunda tuvale birak
-        e.stopPropagation(); rapor.onSelect(v.handle);
-      });
-    }
+      "vector-effect": "non-scaling-stroke", opacity: (secili||riskli)?.98:.85 };
+    if (dis) { attr.stroke = "var(--metin2)"; attr["stroke-dasharray"] = "7 5";
+      attr.opacity = .5; }
+    const p = ekle(svg, "path", attr);
+    if (dis) { const t = document.createElementNS(SVGNS, "title");
+      t.textContent = "Tabaka olcu siniri — secilemez"; p.appendChild(t); }
+    if (rapAktif && !dis) p.style.cursor = "pointer";
     if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
         fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)",
@@ -1306,6 +1380,20 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
       svg.addEventListener("mouseenter", () => { svg._hover = true; });
       svg.addEventListener("mouseleave", () => { svg._hover = false; });
     }
+  }
+  // Vektor secimi: tuval tiklamasi geometrik isabet testi ile cozulur (path
+  // basina dinleyici yerine) — boylece dis sinir ic parcalarin tiklamasini
+  // yutmaz ve ic-ice vektorlerde en icteki secilir.
+  if (svg._secHandler) {                 // onceki secim isleyicisini temizle
+    svg.removeEventListener("click", svg._secHandler); svg._secHandler = null; }
+  if (rapAktif && !rapor.isaret) {
+    const sec = ev => {
+      if (svg._suruklendi) return;        // kaydirma (pan) idi, secme
+      const h = dxfSecimAdayi(svg, ev.clientX, ev.clientY);
+      if (h != null) rapor.onSelect(h);
+    };
+    svg._secHandler = sec;
+    svg.addEventListener("click", sec);
   }
   // Isaretleme modu (buton ile): tuvale tiklayinca AKTIF parcanin en yakin
   // kontur noktasina DOGRU baslangici koy.
