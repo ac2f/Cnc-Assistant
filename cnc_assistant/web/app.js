@@ -2,6 +2,7 @@
 // CNC-Assistant — tarayici mantigi (bagimliliksiz vanilla JS)
 
 const SVGNS = "http://www.w3.org/2000/svg";
+let ONIZ_TAM = null;   // acik onizleme tam-ekran karti (yoksa null)
 const IK_KLASOR = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 const IK_DOSYA = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h8l6 6v14a0 0 0 0 1 0 0H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/></svg>';
 
@@ -236,6 +237,9 @@ async function yukle(doc) {
 
 // ===================== render =====================
 function render() {
+  // Icerik DOM'u yeniden kurulacagi icin acik tam-ekran durumunu sifirla
+  // (aksi halde body kaydirma kilidi ve stale referans kalir).
+  if (ONIZ_TAM) { document.body.classList.remove("oniz-tam-acik"); ONIZ_TAM = null; }
   // sekmeler
   const sk = $("sekmeler"); sk.innerHTML = "";
   DOCS.forEach(d => {
@@ -327,7 +331,7 @@ function dxfIcerik(doc) {
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <label class="anahtar"><input type="checkbox" id="d_rapor_ac">
             <span class="kutu"></span> <b>Hata bildir</b> (yanlis baslangicli vektorleri sec)</label>
-          <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → secilir (sari). Dogru baslangic icin: imleci istenen koseye getir ve <b>S</b> tusuna bas (ya da 'baslangici isaretle' ile tikla).</span>
+          <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → secilir (sari). En distaki tabaka siniri secilemez; ic-ice sekillerde en icteki secilir. Dogru baslangic icin imleci getir: <b>S</b> = en yakin mevcut node · <b>E</b> = kontur uzerinde yeni node · <b>F</b> = onizlemeyi tam ekran.</span>
         </div>
         <div id="d_rapor_govde" style="display:none;flex-direction:column;gap:8px">
           <div id="d_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
@@ -356,16 +360,20 @@ function dxfIcerik(doc) {
       </div>
       <div class="durum" id="d_durum"></div>
     </div>
-    <div class="kart">
+    <div class="kart" id="d_onizKart">
+      <div class="tam-ekran-cubuk">
+        <button class="dugme hayalet kucuk" id="d_tamekran" title="Onizlemeyi tam ekran ac/kapat (F)">⛶ Tam ekran (F)</button>
+      </div>
       <div class="paneller">
         <div class="panel"><div class="pbaslik"><span>ONCESI — orijinal baslangic</span></div>
           <svg class="tuval" id="svgOnce"></svg></div>
         <div class="panel"><div class="pbaslik"><span>SONRASI — optimize</span></div>
           <svg class="tuval" id="svgSonra"></svg>
           <div class="aciklama"><span><i style="background:#34c759"></i>Yeni baslangic</span>
-            <span><i style="background:#ff3b30"></i>Riskli parca (hold-down)</span></div></div>
+            <span><i style="background:#ff3b30"></i>Riskli parca (hold-down)</span>
+            <span><i style="background:#0a84ff"></i>Yeni node (E)</span></div></div>
       </div>
-      <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
+      <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla · <b>S</b>: en yakin node · <b>E</b>: yeni node · <b>F</b>: tam ekran</div>
       <div class="gecmis-serit" id="d_gecmis"></div>
     </div>`;
   // olaylar
@@ -376,6 +384,7 @@ function dxfIcerik(doc) {
     $("d_tol").onchange = e => { p.node_tol = parseFloat(e.target.value) || 1e-6; kaydetP(); };
     $("d_temiz").onchange = e => { p.node_temiz = e.target.checked; kaydetP(); };
     $("d_yeniden").onclick = () => yukle(doc);
+    if ($("d_tamekran")) $("d_tamekran").onclick = () => onizTamEkranToggle();
     // --- Onizleme ayarlari (kalici: localStorage 'onizAyar') ---
     const oz = onizAyarAl();
     $("oz_cizgi").value = oz.cizgi_kalinlik; $("oz_vrenk").value = oz.vektor_renk;
@@ -456,7 +465,11 @@ function dxfCiz(doc) {
     else { R.secim.set(h, { dogru:null, not:"" }); R.aktifHandle = h; }
     dxfCiz(doc); dxfRaporListe(doc);
   };
-  R.onMark = (h, xy) => { const d = R.secim.get(h); if (d){ d.dogru = xy; } R.isaret=false;
+  // xy: dogru baslangic; eNode=true ise "E" ile olusturulmus yeni node
+  // (kontur uzerine projekte). Yeni bir baslangic atandiginda onceki E node
+  // yerini yeni degere birakir (tekil oldugundan kendiliginden silinir).
+  R.onMark = (h, xy, eNode) => { const d = R.secim.get(h);
+    if (d){ d.dogru = xy; d.eNode = !!eNode; } R.isaret=false;
     dxfCiz(doc); dxfRaporListe(doc); };
   cizVarliklar("svgOnce", v.oncesi, [], true);
   cizVarliklar("svgSonra", v.sonrasi, v.riskli_handlelar, true, R);
@@ -474,8 +487,9 @@ function dxfRaporListe(doc) {
     const bas = v && v.baslangic ? `(${v.baslangic[0].toFixed(1)}, ${v.baslangic[1].toFixed(1)})` : "—";
     const dog = d.dogru ? `(${d.dogru[0].toFixed(1)}, ${d.dogru[1].toFixed(1)})` : "—";
     const akt = R.aktifHandle === handle;
+    const eEtiket = d.dogru && d.eNode ? ` <span class="kk2" style="color:#0a84ff">(yeni node)</span>` : "";
     h += `<div class="rrow ${akt?'aktif':''}" data-h="${handle}">
-      <div class="rr1"><b>#${handle}</b> mevcut ${bas} → dogru <span class="${d.dogru?'ok':''}">${dog}</span></div>
+      <div class="rr1"><b>#${handle}</b> mevcut ${bas} → dogru <span class="${d.dogru?'ok':''}">${dog}</span>${eEtiket}</div>
       <div class="rr2">
         <button class="dugme hayalet kucuk" data-akt="${handle}">${akt&&R.isaret?'nokta sec…':'baslangici isaretle'}</button>
         <input class="alan kk" data-not="${handle}" placeholder="not (ops.)" value="${(d.not||'').replace(/"/g,'&quot;')}" style="flex:1;min-width:120px">
@@ -496,7 +510,8 @@ async function dxfRaporIndir(doc) {
   const R = doc.rapor;
   if (!R.secim.size) { alert("Once hatali vektorleri secin."); return; }
   const secimler = [];
-  R.secim.forEach((d, handle) => secimler.push({ handle, dogru_baslangic:d.dogru, not:d.not }));
+  R.secim.forEach((d, handle) => secimler.push({ handle, dogru_baslangic:d.dogru,
+    yeni_node: !!d.eNode, not:d.not }));
   const gnot = ($("d_rapor_not") && $("d_rapor_not").value) || "";
   const ad = ($("d_rapor_ad") && $("d_rapor_ad").value.trim()) || "";
   const r = await api("/api/dxf/rapor", { yol: doc.yol, secimler, genel_not: gnot,
@@ -540,7 +555,7 @@ function gcodeIcerik(doc) {
     return el;
   }
   el.innerHTML = `
-    <div class="kart">
+    <div class="kart" id="g_onizKart">
       <div class="gc-arac">
         <button class="dugme hayalet kucuk" data-mod="sol-alt">Auto (sol-alt→sag-ust)</button>
         <button class="dugme hayalet kucuk" data-mod="serpantin">Serpantin</button>
@@ -561,6 +576,7 @@ function gcodeIcerik(doc) {
         <input type="text" class="alan kk" id="g_tabadet" value="${doc.gc.tabAdet||4}"
                title="Kontur basina koprü sayisi" style="width:52px">
         <button class="dugme hayalet kucuk" id="g_goster">Goster</button>
+        <button class="dugme hayalet kucuk" id="g_tamekran" title="Onizlemeyi tam ekran ac/kapat (F)">⛶ Tam ekran (F)</button>
         <div style="flex:1"></div>
         <span class="birim-cip">${g.birim ? g.birim : "birim?"}</span>
         <input type="text" class="alan kk" id="g_kayit_ad" placeholder="kayit adi (bos=önek)" style="width:180px">
@@ -613,6 +629,7 @@ function gcodeIcerik(doc) {
     $("g_tabadet").onchange = async e => { doc.gc.tabAdet = parseInt(e.target.value) || 4;
       AYAR.yaz("tabAdet", doc.gc.tabAdet); if (doc.gc.tabAcik) { await gcTablariGetir(doc); gcCiz(doc, true); } };
     $("g_goster").onclick = () => gcCiz(doc, true);
+    if ($("g_tamekran")) $("g_tamekran").onclick = () => onizTamEkranToggle();
     $("g_kaydet").onclick = () => gcKaydet(doc);
     doc.gc.rapor = doc.gc.rapor || { aktif:false, notlar:new Map() };
     $("g_rapor_ac").onchange = e => { doc.gc.rapor.aktif = e.target.checked;
@@ -1152,9 +1169,12 @@ function svgKur(svg){ while (svg.firstChild) svg.removeChild(svg.firstChild); }
 // Tekerlekle yaklastir/uzaklastir + surukleyerek kaydir + cift tik sifirla.
 // Icerik piksel uzayinda (0..W, 0..H) cizilir; viewBox degistirilerek zoom yapilir.
 function zoomEtkinlestir(svg) {
-  const W = svg.clientWidth || 600, H = svg.clientHeight || 440;
-  if (!svg._vb) svg._vb = [0, 0, W, H];
+  // Boyut dinamik okunur; boylece tam-ekran gecisinde (svg buyuyunce) zoom/pan
+  // matematigi dogru kalir ve olaylar yeniden baglanmaz (tek sefer baglanir).
+  const boyut = () => [svg.clientWidth || 600, svg.clientHeight || 440];
+  if (!svg._vb) { const [W,H] = boyut(); svg._vb = [0, 0, W, H]; }
   const uygula = () => {
+    const [W] = boyut();
     svg.setAttribute("viewBox", svg._vb.join(" "));
     // Nokta/yazi isaretlerini ekran-sabit boyutta tut (cizgiler zaten
     // vector-effect:non-scaling-stroke ile sabit). s = veri-birim / ekran-piksel
@@ -1170,6 +1190,7 @@ function zoomEtkinlestir(svg) {
   svg._zoom = true;
   svg.addEventListener("wheel", e => {
     e.preventDefault();
+    const [W, H] = boyut();
     const [x, y, w, h] = svg._vb;
     const r = svg.getBoundingClientRect();
     const cx = x + (e.clientX - r.left) / r.width * w;
@@ -1207,7 +1228,7 @@ function zoomEtkinlestir(svg) {
     // click isleyicileri okuduktan sonra sifirla.
     setTimeout(() => { svg._suruklendi = false; }, 0);
   });
-  svg.addEventListener("dblclick", () => { svg._vb = [0, 0, W, H]; uygula(); });
+  svg.addEventListener("dblclick", () => { const [W,H]=boyut(); svg._vb = [0, 0, W, H]; uygula(); });
 }
 function ekle(svg, tip, attrs){ const e = document.createElementNS(SVGNS, tip);
   for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; }
@@ -1361,12 +1382,24 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
         fill:basGoster?"#34c759":"var(--metin2)",stroke:"var(--yuzey)",
         "stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
-    // Kullanicinin isaretledigi DOGRU baslangic (yesil elmas)
+    // Kullanicinin isaretledigi DOGRU baslangic:
+    //  - S (mevcut node'a oturtma): yesil elmas
+    //  - E (kontur uzerinde yeni node): mavi halka + arti (yeni node)
     if (rapAktif && secili) {
       const d = rapor.secim.get(v.handle);
       if (d && d.dogru) { const [mx,my]=T(d.dogru[0],d.dogru[1]);
-        ekle(svg,"rect",{x:mx-5,y:my-5,width:10,height:10,transform:`rotate(45 ${mx} ${my})`,
-          fill:"#30d158",stroke:"#0a3","stroke-width":1.5,"vector-effect":"non-scaling-stroke"}); }
+        if (d.eNode) {
+          ekle(svg,"circle",{cx:mx,cy:my,r:6,fill:"#0a84ff",
+            stroke:"#fff","stroke-width":1.8,"vector-effect":"non-scaling-stroke"});
+          ekle(svg,"line",{x1:mx-3.5,y1:my,x2:mx+3.5,y2:my,stroke:"#fff",
+            "stroke-width":1.6,"vector-effect":"non-scaling-stroke"});
+          ekle(svg,"line",{x1:mx,y1:my-3.5,x2:mx,y2:my+3.5,stroke:"#fff",
+            "stroke-width":1.6,"vector-effect":"non-scaling-stroke"});
+        } else {
+          ekle(svg,"rect",{x:mx-5,y:my-5,width:10,height:10,transform:`rotate(45 ${mx} ${my})`,
+            fill:"#30d158",stroke:"#0a3","stroke-width":1.5,"vector-effect":"non-scaling-stroke"});
+        }
+      }
     }
   });
   // Hata-bildir modunda: S kisayolu ve isaret tiklamasi icin gerekli guncel
@@ -1436,6 +1469,56 @@ function dxfSKisayol(){
     bildir(`Baslangic isaretlendi: (${en[0].toFixed(1)}, ${en[1].toFixed(1)})`); }
   return true;
 }
+// Imlecin (mx,my piksel) AKTIF konturun uzerine EN YAKIN projeksiyonu (veri
+// koordinati). Mevcut bir kose degil, kenar uzerinde herhangi bir nokta olur.
+function konturaProjekte(av, mx, my, T){
+  const poly = vektorPolyline(av.d); const n = poly.length; if (n < 2) return null;
+  const seg = av.kapali ? n : n - 1;
+  let best = null, bd = 1e18;
+  for (let i=0;i<seg;i++){
+    const a = poly[i], b = poly[(i+1)%n];
+    const [ax,ay]=T(a[0],a[1]), [bx,by]=T(b[0],b[1]);
+    const dx=bx-ax, dy=by-ay, l2=dx*dx+dy*dy;
+    let t = l2 ? ((mx-ax)*dx+(my-ay)*dy)/l2 : 0; t=Math.max(0,Math.min(1,t));
+    const cx=ax+t*dx, cy=ay+t*dy, dd=(mx-cx)**2+(my-cy)**2;
+    if (dd<bd){ bd=dd; best=[a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1])]; }
+  }
+  return best;
+}
+// E: SONRASI onizleme uzerindeyken AKTIF vektorde imlecin oldugu yere kontur
+// uzerinde YENI bir node olusturup baslangici oraya tasir. Onceki E node'u
+// (varsa) bu yeni baslangic yerini alir.
+function dxfEKisayol(){
+  const svg = document.getElementById("svgSonra");
+  if (!svg || !svg._hover || !svg._rapor || !svg._rapor.aktif) return false;
+  const R = svg._rapor;
+  if (R.aktifHandle == null) { bildir("Once bir vektor secin (uzerine tiklayin).", true); return true; }
+  const av = (svg._varliklar || []).find(x => x.handle === R.aktifHandle);
+  if (!av || !svg._mouse) return true;
+  const [mx,my] = ekranToTuval(svg, svg._mouse[0], svg._mouse[1]);
+  const nokta = konturaProjekte(av, mx, my, svg._T);
+  if (nokta) { R.onMark(R.aktifHandle, nokta, true);
+    bildir(`Yeni node: (${nokta[0].toFixed(1)}, ${nokta[1].toFixed(1)})`); }
+  return true;
+}
+// F: aktif dosyanin onizleme kartini tam ekran ac/kapat (toggle).
+function onizTamEkranToggle(){
+  const doc = aktifDoc(); if (!doc) return false;
+  const kart = document.getElementById(doc.tur === "dxf" ? "d_onizKart" : "g_onizKart");
+  if (!kart) return false;
+  const acik = kart.classList.toggle("oniz-tam");
+  document.body.classList.toggle("oniz-tam-acik", acik);
+  ONIZ_TAM = acik ? kart : null;
+  // Tuval boyutu degisti: viewBox'i sifirla (olaylar dinamik boyut okur,
+  // yeniden baglanmaz), layout oturunca yeniden ciz.
+  kart.querySelectorAll(".tuval").forEach(s => { s._vb = null; });
+  requestAnimationFrame(() => {
+    if (doc.tur === "dxf") dxfCiz(doc);
+    else if (doc.gc) gcCiz(doc);
+  });
+  return true;
+}
+function onizTamEkranKapat(){ if (ONIZ_TAM) onizTamEkranToggle(); }
 
 // ===================== toplu isle =====================
 $("topluBtn").onclick = () => { $("pKlasor").value = GZ.yol || ""; $("perde").classList.remove("gizli"); };
@@ -1487,12 +1570,17 @@ function bildir(msg, hata) {
 
 // ===================== klavye kisayollari =====================
 document.addEventListener("keydown", e => {
-  // Plain "S": DXF hata-bildir modunda SONRASI onizleme uzerindeyken aktif
-  // vektorun baslangicini imlece ata (bir yazi alanina yazilmiyorsa).
-  if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  // Sade harf kisayollari (yazi alaninda degilken):
+  //  S = mevcut en yakin node'a otur · E = kontur uzerinde yeni node olustur
+  //  F = onizleme tam ekran (toggle) · Esc = tam ekrandan cik
+  if (!e.ctrlKey && !e.metaKey && !e.altKey) {
     const t = e.target;
     const yazi = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-    if (!yazi && dxfSKisayol()) { e.preventDefault(); return; }
+    const k1 = e.key.toLowerCase();
+    if (!yazi && k1 === "s" && dxfSKisayol()) { e.preventDefault(); return; }
+    if (!yazi && k1 === "e" && dxfEKisayol()) { e.preventDefault(); return; }
+    if (!yazi && k1 === "f" && onizTamEkranToggle()) { e.preventDefault(); return; }
+    if (e.key === "Escape" && ONIZ_TAM) { e.preventDefault(); onizTamEkranKapat(); return; }
   }
   const meta = e.ctrlKey || e.metaKey;
   if (!meta) return;

@@ -188,6 +188,15 @@ svg.tuval{width:100%;height:440px;background:var(--yuzey2);border-radius:var(--r
   border:1px solid var(--cizgi);display:block}
 .aciklama{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--metin2);margin-top:8px}
 .aciklama i{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:-1px}
+.tam-ekran-cubuk{display:flex;justify-content:flex-end;margin-bottom:8px}
+
+/* onizleme tam ekran (F ile toggle) */
+.kart.oniz-tam{position:fixed;inset:0;z-index:1000;margin:0;border-radius:0;
+  overflow:auto;box-shadow:none;display:flex;flex-direction:column}
+.kart.oniz-tam .paneller{flex:1}
+.kart.oniz-tam svg.tuval{height:calc(100vh - 150px)}
+#g_onizKart.oniz-tam svg.tuval{height:calc(100vh - 230px)}
+body.oniz-tam-acik{overflow:hidden}
 
 /* gcode editor */
 .gc-govde{display:grid;grid-template-columns:330px 1fr;gap:16px}

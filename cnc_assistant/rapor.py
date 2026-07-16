@@ -25,6 +25,7 @@ Sema (surum 1):
         "merkez": [x,y],
         "mevcut_baslangic": [x,y],       # algoritmanin koydugu
         "dogru_baslangic": [x,y] | null, # kullanicinin isaretledigi
+        "yeni_node": <bool>,             # (dxf) baslangic kontur uzerinde yeni node ise
         "mevcut_sira": <int|null>,       # (gcode) mevcut kesim sirasi
         "dogru_sira":  <int|null>,       # (gcode) istenen kesim sirasi
         "kontur": [[x,y], ...],          # govde (seyreltilmis)
@@ -125,6 +126,7 @@ def dxf_rapor(dosya, birim, varliklar, secimler, genel_not=""):
             "merkez": _merkez(bb),
             "mevcut_baslangic": v.get("baslangic"),
             "dogru_baslangic": sec.get("dogru_baslangic"),
+            "yeni_node": bool(sec.get("yeni_node")),
             "kontur": _seyrek(pts),
             "not": (sec.get("not") or "").strip(),
         })
