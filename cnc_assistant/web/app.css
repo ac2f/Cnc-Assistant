@@ -366,3 +366,13 @@ body.oniz-tam-acik{overflow:hidden}
 .rrow .rr1{font-size:13px}
 .rrow .rr2{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .rrow .ok{color:#30d158}
+
+/* Rapor paneli: listeden vektor/blok secme satiri */
+.rapor-secici{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
+/* Vektor-bazli butunluk raporu */
+.butunluk-rapor{margin-top:8px;border:1px solid #bf5af2;border-radius:8px;
+  padding:8px 10px;background:rgba(191,90,242,.08);font-size:12.5px;
+  display:flex;flex-direction:column;gap:3px;max-height:190px;overflow:auto}
+.butunluk-rapor .bt-baslik{font-weight:700;margin-bottom:3px}
+.butunluk-rapor .bt-satir{font-variant-numeric:tabular-nums}

@@ -6,11 +6,26 @@ let ONIZ_TAM = null;   // acik onizleme tam-ekran karti (yoksa null)
 const IK_KLASOR = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 const IK_DOSYA = '<svg class="ik" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 2h8l6 6v14a0 0 0 0 1 0 0H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v6h6"/></svg>';
 
+// Sunucu cagrisi. ASLA reject etmez: aksi halde cagiran async fonksiyon
+// sessizce olur ve kullanici "tusa bastim, hicbir sey olmadi" yasar. Her
+// basarisizlik {hata: "..."} olarak doner ve arayuzde gorunur.
 async function api(uc, veri) {
-  const r = await fetch(uc, { method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(veri || {}) });
-  return r.json();
+  let r;
+  try {
+    r = await fetch(uc, { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(veri || {}) });
+  } catch (e) {
+    return { hata: `Sunucuya ulasilamadi (${uc}): ${e.message}. `
+                 + `Sunucu calisiyor mu?` };
+  }
+  const metin = await r.text().catch(() => "");
+  if (!r.ok && !metin) return { hata: `Sunucu hatasi ${r.status} (${uc}).` };
+  try {
+    return JSON.parse(metin);
+  } catch (e) {
+    return { hata: `Sunucu yaniti okunamadi (${uc}): ${metin.slice(0, 200)}` };
+  }
 }
 const $ = id => document.getElementById(id);
 
@@ -334,6 +349,13 @@ function dxfIcerik(doc) {
           <span class="kk2" style="opacity:.65">Sagdaki 'SONRASI' onizlemede hatali vektore tikla → secilir (sari). En distaki tabaka siniri secilemez; ic-ice sekillerde en icteki secilir. Dogru baslangic icin imleci getir: <b>S</b> = en yakin mevcut node · <b>E</b> = kontur uzerinde yeni node · <b>F</b> = onizlemeyi tam ekran.</span>
         </div>
         <div id="d_rapor_govde" style="display:none;flex-direction:column;gap:8px">
+          <div class="rapor-secici">
+            <span class="kk2">Vektor sec:</span>
+            <select class="alan kk" id="d_rapor_sec" style="flex:1;min-width:180px"></select>
+            <button class="dugme hayalet kucuk" id="d_rapor_ekle">+ Ekle</button>
+            <button class="dugme hayalet kucuk" id="d_rapor_sapan">Sapan vektorleri ekle</button>
+            <button class="dugme hayalet kucuk" id="d_rapor_bosalt">Secimi temizle</button>
+          </div>
           <div id="d_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
           <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             <input type="text" class="alan kk" id="d_rapor_not" placeholder="genel not (ops.)" style="flex:1;min-width:160px">
@@ -356,8 +378,12 @@ function dxfIcerik(doc) {
         <div class="cip">Kaldirilan gereksiz node<b>${v.silinen_node}</b></div>
         <div class="cip">Cember→polyline<b>${v.cember}</b></div>
         <div class="cip">Riskli parca<b>${v.riskli.length}</b></div>
-        <div class="cip ${v.dogrulama?'ok':'uyari'}">Butunluk<b>${v.dogrulama?'birebir':'UYARI'}</b></div>
+        <div class="cip ${v.dogrulama?'ok':'uyari'}" id="d_butunluk_cip"
+             title="Her vektor tek tek oncesi/sonrasi karsilastirilir">
+          Butunluk<b>${butunlukOzet(v)}</b></div>
       </div>
+      <div class="butunluk-rapor ${(v.butunluk&&v.butunluk.sapan&&v.butunluk.sapan.length)?'':'gizli'}"
+           id="d_butunluk">${butunlukDetay(v)}</div>
       <div class="durum" id="d_durum"></div>
     </div>
     <div class="kart" id="d_onizKart">
@@ -371,7 +397,9 @@ function dxfIcerik(doc) {
           <svg class="tuval" id="svgSonra"></svg>
           <div class="aciklama"><span><i style="background:#34c759"></i>Yeni baslangic</span>
             <span><i style="background:#ff3b30"></i>Riskli parca (hold-down)</span>
-            <span><i style="background:#0a84ff"></i>Yeni node (E)</span></div></div>
+            <span><i style="background:#0a84ff"></i>Yeni node (E)</span>
+            <span><i style="background:#ff9f0a"></i>Hata bildirimi secili</span>
+            <span><i style="background:#bf5af2"></i>Butunluk sapmasi</span></div></div>
       </div>
       <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla · <b>S</b>: en yakin node · <b>E</b>: yeni node · <b>F</b>: tam ekran</div>
       <div class="gecmis-serit" id="d_gecmis"></div>
@@ -433,10 +461,41 @@ function dxfIcerik(doc) {
       doc.rapor.aktif = e.target.checked;
       $("d_rapor_govde").style.display = e.target.checked ? "flex" : "none";
       dxfCiz(doc); dxfRaporListe(doc);
+      if (e.target.checked) {
+        $("d_rapor_kutu").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        bildir("Hata bildir acik — SONRASI onizlemede hatali vektore tiklayin "
+             + "(ya da alttaki listeden secip '+ Ekle').");
+      }
     };
     $("d_rapor_indir").onclick = () => dxfRaporIndir(doc);
+    $("d_rapor_ekle").onclick = () => {
+      const h = $("d_rapor_sec").value;
+      if (!h) { bildir("Secilebilecek vektor kalmadi.", true); return; }
+      dxfRaporSec(doc, h, true);
+    };
+    $("d_rapor_bosalt").onclick = () => {
+      const n = doc.rapor.secim.size;
+      doc.rapor.secim.clear(); doc.rapor.aktifHandle = null; doc.rapor.isaret = false;
+      dxfCiz(doc); dxfRaporListe(doc);
+      bildir(n ? `${n} secim temizlendi.` : "Zaten secim yoktu.");
+    };
+    $("d_rapor_sapan").onclick = () => {
+      const sapan = (v.sapan_handlelar || []).filter(h => !doc.rapor.secim.has(h));
+      if (!sapan.length) {
+        bildir((v.sapan_handlelar||[]).length
+          ? "Sapan vektorlerin hepsi zaten secili."
+          : "Butunluk temiz — sapan vektor yok.", !(v.sapan_handlelar||[]).length);
+        return;
+      }
+      sapan.forEach(h => doc.rapor.secim.set(h,
+        { dogru:null, not:"butunluk denetimi: geometri oncesi/sonrasi farkli" }));
+      doc.rapor.aktifHandle = sapan[0];
+      dxfCiz(doc); dxfRaporListe(doc);
+      bildir(`${sapan.length} sapan vektor rapora eklendi.`);
+    };
     if (doc.rapor.aktif) { $("d_rapor_ac").checked = true;
-      $("d_rapor_govde").style.display = "flex"; dxfRaporListe(doc); }
+      $("d_rapor_govde").style.display = "flex"; }
+    dxfRaporListe(doc);
     $("d_nest").onclick = async () => {
       $("d_durum").innerHTML = `<span class="yukleniyor"></span> Yerlestiriliyor…`;
       const r = await api("/api/dxf/nest", { yol: doc.yol,
@@ -456,15 +515,33 @@ function dxfIcerik(doc) {
   return el;
 }
 
+// Bir vektoru rapor secimine ekler/cikarir. `zorlaEkle` true ise (listeden
+// ekleme) her zaman ekler, tiklama ise ac/kapa yapar.
+function dxfRaporSec(doc, handle, zorlaEkle) {
+  const R = doc.rapor;
+  if (R.secim.has(handle) && !zorlaEkle) {
+    R.secim.delete(handle);
+    if (R.aktifHandle === handle) R.aktifHandle = null;
+    bildir(`#${handle} secimden cikarildi.`);
+  } else if (!R.secim.has(handle)) {
+    R.secim.set(handle, { dogru:null, not:"" });
+    R.aktifHandle = handle;
+    bildir(`#${handle} secildi (${R.secim.size} oge).`);
+  } else {
+    R.aktifHandle = handle;
+  }
+  dxfCiz(doc); dxfRaporListe(doc);
+}
+
 function dxfCiz(doc) {
   const v = doc.veri; if (v.hata) return;
   doc.rapor = doc.rapor || { aktif:false, secim:new Map(), aktifHandle:null, isaret:false };
   const R = doc.rapor;
-  R.onSelect = h => {
-    if (R.secim.has(h)) { R.secim.delete(h); if (R.aktifHandle===h) R.aktifHandle=null; }
-    else { R.secim.set(h, { dogru:null, not:"" }); R.aktifHandle = h; }
-    dxfCiz(doc); dxfRaporListe(doc);
-  };
+  R.sapan = new Set(v.sapan_handlelar || []);
+  R.onSelect = h => dxfRaporSec(doc, h, false);
+  // Tiklama hicbir vektore denk gelmediyse sessiz kalma; kullaniciya soyle.
+  R.onMiss = () => bildir("Tiklama bir vektore denk gelmedi — konturun uzerine "
+    + "ya da parcanin icine tiklayin (tekerlekle yaklasabilirsiniz).", true);
   // xy: dogru baslangic; eNode=true ise "E" ile olusturulmus yeni node
   // (kontur uzerine projekte). Yeni bir baslangic atandiginda onceki E node
   // yerini yeni degere birakir (tekil oldugundan kendiliginden silinir).
@@ -476,11 +553,49 @@ function dxfCiz(doc) {
   dxfGecmisCiz(doc);
 }
 
+// ---- Vektor-bazli butunluk ozeti (her vektor tek tek dogrulanir) ----
+function butunlukOzet(v) {
+  const b = v.butunluk;
+  if (!b) return v.dogrulama ? "birebir" : "UYARI";
+  const n = (b.sapan || []).length;
+  if (!n) return `birebir (${b.kontrol})`;
+  return `${n} vektor sapti`;
+}
+function butunlukDetay(v) {
+  const sapan = (v.butunluk && v.butunluk.sapan) || [];
+  if (!sapan.length) return "";
+  const satir = sapan.slice(0, 20).map(s =>
+    `<div class="bt-satir"><b>#${s.handle}</b> <span class="kk2">${s.tip||""}</span>
+       — ${s.neden}${s.sapma!=null?` <span class="kk2">(sapma ${s.sapma})</span>`:""}</div>`).join("");
+  const fazla = sapan.length > 20 ? `<div class="kk2">…ve ${sapan.length-20} tane daha</div>` : "";
+  return `<div class="bt-baslik uyari">⚠ ${sapan.length} vektorun geometrisi oncesi/sonrasi ayni degil</div>
+    ${satir}${fazla}
+    <div class="kk2" style="margin-top:6px">Bu vektorler onizlemede <b>mor</b> cizilir.
+      'Hata bildir' acikken <b>Sapan vektorleri ekle</b> ile hepsini rapora alabilirsin.</div>`;
+}
+
+// Rapor panelindeki vektor secme listesini (dropdown) doldurur. Onizlemeye
+// tiklamak zor gelen/isabet ettiremeyen kullanici icin ikinci yol.
+function dxfRaporSeciciDoldur(doc) {
+  const sel = $("d_rapor_sec"); if (!sel) return;
+  const R = doc.rapor, vs = doc.veri.sonrasi || [];
+  const dis = svgDisHandle();
+  const secenek = vs.filter(v => v.handle !== dis && !R.secim.has(v.handle))
+    .map(v => {
+      const b = v.baslangic ? `(${v.baslangic[0].toFixed(1)}, ${v.baslangic[1].toFixed(1)})` : "";
+      return `<option value="${v.handle}">#${v.handle} · ${v.tip||""} ${b}</option>`;
+    }).join("");
+  sel.innerHTML = secenek || `<option value="">(secilebilecek vektor kalmadi)</option>`;
+}
+const svgDisHandle = () => { const s = $("svgSonra"); return s ? s._disHandle : null; };
+
 // Secilen hatali vektorlerin listesi (id, mevcut/dogru baslangic, not).
 function dxfRaporListe(doc) {
   const kap = $("d_rapor_liste"); if (!kap) return;
   const R = doc.rapor, vs = (doc.veri.sonrasi||[]);
-  if (!R.secim.size) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Henuz secim yok — SAGDAKI onizlemede hatali vektore tiklayin.</div>`; return; }
+  dxfRaporSeciciDoldur(doc);
+  dxfRaporButonTazele(doc);
+  if (!R.secim.size) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Henuz secim yok — SAGDAKI 'SONRASI' onizlemede hatali vektore tiklayin, ya da yukaridaki listeden secip <b>+ Ekle</b> deyin.</div>`; return; }
   let h = "";
   R.secim.forEach((d, handle) => {
     const v = vs.find(x => x.handle === handle);
@@ -506,19 +621,47 @@ function dxfRaporListe(doc) {
     const d = R.secim.get(inp.dataset.not); if (d) d.not = inp.value; });
 }
 
+// Indirme butonunun etiketi/durumu secime gore canli guncellenir; boylece
+// "bastim ama bir sey olmadi" hissi olusmadan once ne olacagi gorunur.
+function dxfRaporButonTazele(doc) {
+  const b = $("d_rapor_indir"); if (!b) return;
+  const n = doc.rapor.secim.size;
+  b.textContent = n ? `Hata raporu indir (${n} oge)` : "Hata raporu indir (.json)";
+  b.classList.toggle("hayalet", !n);
+}
+
 async function dxfRaporIndir(doc) {
   const R = doc.rapor;
-  if (!R.secim.size) { alert("Once hatali vektorleri secin."); return; }
+  const dr = $("d_rapor_durum");
+  const yaz = (s, hata) => { if (dr) dr.innerHTML =
+    `<span class="${hata?'uyari':'ok'}">${s}</span>`; bildir(s, !!hata); };
+  if (!R.secim.size) {
+    yaz("Once hatali vektorleri secin: onizlemede vektore tiklayin ya da "
+        + "listeden secip '+ Ekle' deyin.", true);
+    return;
+  }
   const secimler = [];
   R.secim.forEach((d, handle) => secimler.push({ handle, dogru_baslangic:d.dogru,
     yeni_node: !!d.eNode, not:d.not }));
   const gnot = ($("d_rapor_not") && $("d_rapor_not").value) || "";
   const ad = ($("d_rapor_ad") && $("d_rapor_ad").value.trim()) || "";
+  if (dr) dr.innerHTML = `<span class="yukleniyor"></span> Rapor uretiliyor…`;
   const r = await api("/api/dxf/rapor", { yol: doc.yol, secimler, genel_not: gnot,
     dosya_adi: ad || undefined });
-  if (r.hata) { alert(r.hata); return; }
-  $("d_rapor_durum").innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}`;
-  window.location.href = r.indir;
+  if (r.hata) { yaz(r.hata, true); return; }
+  const atlandi = r.atlanan ? ` <span class="uyari">(${r.atlanan} secim eslesmedi)</span>` : "";
+  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`;
+  bildir(`Hata raporu indiriliyor (${r.oge_sayisi} oge).`);
+  indir(r.indir);
+}
+
+// Indirmeyi sayfadan ayrilmadan tetikler. (window.location.href kullanmak
+// bazi tarayicilarda gorunur bir sey yapmaz; gizli <a download> guvenlidir.)
+function indir(url) {
+  const a = document.createElement("a");
+  a.href = url; a.rel = "noopener"; a.style.display = "none";
+  document.body.appendChild(a); a.click();
+  setTimeout(() => a.remove(), 0);
 }
 
 // DXF onizleme gecmisi (her "Yeniden Isle" / "Nesting" bir adim ekler)
@@ -592,15 +735,25 @@ function gcodeIcerik(doc) {
           <div class="liste" id="g_liste"></div>
         </div>
         <div>
-          <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — çift tık: soldaki menü · Ctrl+tık: seç
+          <div class="pbaslik" style="margin-bottom:8px">Sira onizleme — tık: seç · Ctrl+tık: ekle/çıkar · Shift+tık: aralık · çift tık: soldaki menü
             <span class="kat-lej"><i class="l-yeni"></i>düzenlenmiş<i class="l-eski"></i>orijinal</span></div>
           <svg class="tuval" id="svgGc"></svg>
           <div class="zoom-ipuc">Tekerlek: yaklas/uzaklas · surukle: kaydir · cift tik: sifirla</div>
           <div class="durum" id="g_durum"></div>
           <div id="g_rapor_kutu" style="margin-top:8px;border-top:1px solid var(--kenar);padding-top:8px">
             <label class="anahtar"><input type="checkbox" id="g_rapor_ac">
-              <span class="kutu"></span> <b>Hata bildir</b> (yanlis sirali bloklari sec — Ctrl+tık)</label>
+              <span class="kutu"></span> <b>Hata bildir</b> (yanlis sirali bloklari sec)</label>
             <div id="g_rapor_govde" style="display:none;flex-direction:column;gap:8px;margin-top:8px">
+              <div class="kk2" style="opacity:.7">Onizlemede blogun <b>konturuna ya da numarasina tikla</b> → hatali
+                olarak isaretlenir (turuncu). Soldaki listeden secmek de calisir. <b>Dogru sirayi isaretle</b>
+                acikken bloklara <b>istedigin sirayla</b> tikla; 1, 2, 3… otomatik atanir.</div>
+              <div class="rapor-secici">
+                <span class="kk2">Blok sec:</span>
+                <select class="alan kk" id="g_rapor_sec" style="flex:1;min-width:170px"></select>
+                <button class="dugme hayalet kucuk" id="g_rapor_ekle">+ Ekle</button>
+                <button class="dugme hayalet kucuk" id="g_rapor_sira">Dogru sirayi isaretle</button>
+                <button class="dugme hayalet kucuk" id="g_rapor_bosalt">Secimi temizle</button>
+              </div>
               <div id="g_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                 <input type="text" class="alan kk" id="g_rapor_not" placeholder="genel not (ops.)" style="flex:1;min-width:150px">
@@ -631,11 +784,34 @@ function gcodeIcerik(doc) {
     $("g_goster").onclick = () => gcCiz(doc, true);
     if ($("g_tamekran")) $("g_tamekran").onclick = () => onizTamEkranToggle();
     $("g_kaydet").onclick = () => gcKaydet(doc);
-    doc.gc.rapor = doc.gc.rapor || { aktif:false, notlar:new Map() };
-    $("g_rapor_ac").onchange = e => { doc.gc.rapor.aktif = e.target.checked;
+    doc.gc.rapor = doc.gc.rapor || { aktif:false, notlar:new Map(), siraMod:false, sayac:0 };
+    $("g_rapor_ac").onchange = e => {
+      doc.gc.rapor.aktif = e.target.checked;
       $("g_rapor_govde").style.display = e.target.checked ? "flex" : "none";
-      if (e.target.checked) gcRaporListe(doc); };
+      if (!e.target.checked) doc.gc.rapor.siraMod = false;
+      gcRaporListe(doc); gcSvg(doc);
+      if (e.target.checked) {
+        $("g_rapor_kutu").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        bildir("Hata bildir acik — onizlemede hatali bloklara tiklayin.");
+      }
+    };
     $("g_rapor_indir").onclick = () => gcRaporIndir(doc);
+    $("g_rapor_ekle").onclick = () => {
+      const id = parseInt($("g_rapor_sec").value, 10);
+      if (isNaN(id)) { bildir("Secilebilecek blok kalmadi.", true); return; }
+      doc.gc.secim.add(id); doc.gc.capa = id;
+      gcRaporListe(doc); gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc);
+      bildir(`Blok ${id + 1} rapora eklendi (${doc.gc.secim.size} oge).`);
+    };
+    $("g_rapor_bosalt").onclick = () => {
+      const n = doc.gc.secim.size;
+      doc.gc.rapor.siraMod = false; doc.gc.rapor.sayac = 0;
+      gcSecTemizle(doc); gcRaporListe(doc);
+      bildir(n ? `${n} secim temizlendi.` : "Zaten secim yoktu.");
+    };
+    $("g_rapor_sira").onclick = () => gcSiraModToggle(doc);
+    if (doc.gc.rapor.aktif) { $("g_rapor_ac").checked = true;
+      $("g_rapor_govde").style.display = "flex"; }
     gcKarsilastirCiz(doc);
     gcGecmisCiz(doc);
     gcGrupCiz(doc);
@@ -871,46 +1047,84 @@ async function gcKaydet(doc) {
   d.innerHTML = m;
 }
 
-// Secilen (Ctrl+tık) hatali bloklarin listesi: mevcut sira + not + istenen sira.
+// Rapor panelindeki blok secme listesini (dropdown) doldurur.
+function gcRaporSeciciDoldur(doc) {
+  const sel = $("g_rapor_sec"); if (!sel) return;
+  const secenek = doc.gc.sira.filter(id => !doc.gc.secim.has(id)).map((id, i) => {
+    const poz = doc.gc.sira.indexOf(id) + 1;
+    const b = blokById(doc, id) || {};
+    return `<option value="${id}">#${poz} · blok ${id + 1}`
+         + `${b.derinlik > 0 ? " · ic" : " · dis"}</option>`;
+  }).join("");
+  sel.innerHTML = secenek || `<option value="">(secilebilecek blok kalmadi)</option>`;
+}
+
+function gcRaporButonTazele(doc) {
+  const b = $("g_rapor_indir"); if (!b) return;
+  const n = doc.gc.secim.size;
+  b.textContent = n ? `Hata raporu indir (${n} oge)` : "Hata raporu indir (.json)";
+  b.classList.toggle("hayalet", !n);
+}
+
+// Secilen hatali bloklarin listesi: mevcut sira + not + istenen sira.
 function gcRaporListe(doc) {
   const kap = $("g_rapor_liste"); if (!kap) return;
-  const sec = [...doc.gc.secim];
-  if (!sec.length) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Onizlemede Ctrl+tık ile hatali bloklari secin.</div>`; return; }
   const R = doc.gc.rapor;
+  const sec = doc.gc.sira.filter(id => doc.gc.secim.has(id));   // sira duzeninde
+  gcRaporSeciciDoldur(doc);
+  gcRaporButonTazele(doc);
+  if (!sec.length) { kap.innerHTML = `<div class="kk2" style="opacity:.6">Henuz secim yok — onizlemede hatali blogun konturuna/numarasina tiklayin, soldaki listeden secin ya da yukaridan secip <b>+ Ekle</b> deyin.</div>`; return; }
   let h = "";
   sec.forEach(id => {
     const poz = doc.gc.sira.indexOf(id) + 1;
     const kayit = R.notlar.get(id) || {};
     h += `<div class="rrow" data-id="${id}">
-      <div class="rr1"><b>#${poz}</b> (blok ${id + 1})</div>
+      <div class="rr1"><b>#${poz}</b> (blok ${id + 1})${kayit.dogru_sira
+        ? ` → dogru sira <span class="ok">${kayit.dogru_sira}</span>` : ""}</div>
       <div class="rr2">
         <input class="alan kk" data-dsira="${id}" type="number" min="1" placeholder="dogru sira" value="${kayit.dogru_sira||''}" style="width:110px">
         <input class="alan kk" data-gnot="${id}" placeholder="not (ops.)" value="${(kayit.not||'').replace(/"/g,'&quot;')}" style="flex:1;min-width:120px">
+        <button class="dugme hayalet kucuk" data-gsil="${id}" title="Secimden cikar">✕</button>
       </div></div>`;
   });
   kap.innerHTML = h;
   kap.querySelectorAll("[data-dsira]").forEach(inp => inp.onchange = () => {
     const id = +inp.dataset.dsira; const k = R.notlar.get(id) || {};
-    k.dogru_sira = inp.value ? parseInt(inp.value) : null; R.notlar.set(id, k); });
+    k.dogru_sira = inp.value ? parseInt(inp.value) : null; R.notlar.set(id, k);
+    gcSvg(doc); });
   kap.querySelectorAll("[data-gnot]").forEach(inp => inp.onchange = () => {
     const id = +inp.dataset.gnot; const k = R.notlar.get(id) || {};
     k.not = inp.value; R.notlar.set(id, k); });
+  kap.querySelectorAll("[data-gsil]").forEach(b => b.onclick = () => {
+    const id = +b.dataset.gsil;
+    doc.gc.secim.delete(id);
+    gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); gcRaporListe(doc); });
 }
 
 async function gcRaporIndir(doc) {
-  const sec = [...doc.gc.secim];
-  if (!sec.length) { alert("Once hatali bloklari secin (Ctrl+tık)."); return; }
+  const sec = doc.gc.sira.filter(id => doc.gc.secim.has(id));
+  const dr = $("g_rapor_durum");
+  const yaz = (s, hata) => { if (dr) dr.innerHTML =
+    `<span class="${hata?'uyari':'ok'}">${s}</span>`; bildir(s, !!hata); };
+  if (!sec.length) {
+    yaz("Once hatali bloklari secin: onizlemede bloga tiklayin, soldaki "
+        + "listeden secin ya da '+ Ekle' kullanin.", true);
+    return;
+  }
   const R = doc.gc.rapor;
   const secimler = sec.map(id => { const k = R.notlar.get(id) || {};
     return { id, mevcut_sira: doc.gc.sira.indexOf(id) + 1,
              dogru_sira: k.dogru_sira || null, not: k.not || "" }; });
   const gnot = ($("g_rapor_not") && $("g_rapor_not").value) || "";
   const ad = ($("g_rapor_ad") && $("g_rapor_ad").value.trim()) || "";
+  if (dr) dr.innerHTML = `<span class="yukleniyor"></span> Rapor uretiliyor…`;
   const r = await api("/api/gcode/rapor", { yol: doc.yol, secimler, genel_not: gnot,
     dosya_adi: ad || undefined });
-  if (r.hata) { alert(r.hata); return; }
-  $("g_rapor_durum").innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}`;
-  window.location.href = r.indir;
+  if (r.hata) { yaz(r.hata, true); return; }
+  const atlandi = r.atlanan ? ` <span class="uyari">(${r.atlanan} secim eslesmedi)</span>` : "";
+  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`;
+  bildir(`Hata raporu indiriliyor (${r.oge_sayisi} oge).`);
+  indir(r.indir);
 }
 
 async function gcCiz(doc, zorla) {
@@ -1054,12 +1268,21 @@ function gcSvg(doc) {
   if (!tum.length) { izgara(svg, W, H); zoomEtkinlestir(svg); return; }
   const T = fitDonusum(tumBbox([tum]), W, H, 34);
   izgara(svg, W, H);
-  // kontur yollari — ic/dis rengiyle, opaklik + cizgi kalinligi stilden
+  const raporAktif = !!(doc.gc.rapor && doc.gc.rapor.aktif);
+  // kontur yollari — ic/dis rengiyle, opaklik + cizgi kalinligi stilden.
+  // Hata-bildir modunda secili (hatali isaretlenen) bloklar turuncu vurgulanir.
   vis.forEach(id => {
     const b = blokById(doc, id); if (!b.komut || b.komut.length < 2) return;
+    const isaretli = raporAktif && sec.has(id);
     ekle(svg, "path", { d: komutYol(b.komut, T), fill: "none",
-      stroke: (b.derinlik > 0 ? st.ic : st.dis), "stroke-width": st.cizgi,
-      opacity: st.opak, "vector-effect": "non-scaling-stroke" });
+      stroke: isaretli ? "#ff9f0a" : (b.derinlik > 0 ? st.ic : st.dis),
+      "stroke-width": isaretli ? Math.max(st.cizgi * 2, 2.4) : st.cizgi,
+      opacity: isaretli ? 1 : st.opak, "vector-effect": "non-scaling-stroke" });
+  });
+  // Isabet testi icin blok konturlarini (tuval uzayinda) sakla.
+  svg._gcBloklar = vis.map(id => {
+    const b = blokById(doc, id);
+    return { id, poly: vektorPolyline(b.komut || []).map(p => T(p[0], p[1])) };
   });
   const defs = ekle(svg, "defs", {});
   defs.innerHTML = `<marker id="ok" markerWidth="7" markerHeight="7" refX="5" refY="3"
@@ -1120,14 +1343,109 @@ function gcSvg(doc) {
     const t = ekle(grp, "text", { x: cx, y: cy + st.nboyut * 0.36, "text-anchor": "middle",
       "font-size": st.nboyut, "data-basefs": st.nboyut, fill: st.numara, "font-weight": 700 });
     t.textContent = p.poz + 1;
-    grp.addEventListener("click", e => {
-      if (e.ctrlKey || e.metaKey) { e.stopPropagation();
-        if (sec.has(p.id)) sec.delete(p.id); else sec.add(p.id);
-        doc.gc.capa = p.id; gcSvg(doc); gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); }
-    });
+    // Hata-bildir modunda isaretlenen "dogru sira" rozetin sag-ustunde durur.
+    const kayit = (doc.gc.rapor && doc.gc.rapor.notlar.get(p.id)) || {};
+    if (raporAktif && kayit.dogru_sira) {
+      const rr = R * 0.62;
+      ekle(svg, "circle", { cx: cx + R * 0.86, cy: cy - R * 0.86, r: rr,
+        "data-baser": rr, fill: "#30d158", stroke: "var(--yuzey)",
+        "stroke-width": 1.6, "vector-effect": "non-scaling-stroke" });
+      const dt = ekle(svg, "text", { x: cx + R * 0.86, y: cy - R * 0.86 + st.nboyut * 0.3,
+        "text-anchor": "middle", "font-size": st.nboyut * 0.8,
+        "data-basefs": st.nboyut * 0.8, fill: "#fff", "font-weight": 700 });
+      dt.textContent = kayit.dogru_sira;
+    }
+    // Rozete tiklamak da secer (eskiden yalnizca Ctrl+tik ise yariyordu).
+    grp.addEventListener("click", e => { e.stopPropagation(); gcOnizTik(doc, p.id, e); });
     grp.addEventListener("dblclick", e => { e.stopPropagation(); gcListeyeGit(doc, p.id); });
   });
+  // Tuval tiklamasi: rozetin disina, konturun uzerine ya da parcanin icine
+  // tiklamak da blogu secer. (Onceden yalnizca rozet + Ctrl calisiyordu; bu
+  // yuzden hata bildirimi pratikte sadece soldaki listeden yapilabiliyordu.)
+  if (svg._gcSecHandler) {
+    svg.removeEventListener("click", svg._gcSecHandler); svg._gcSecHandler = null; }
+  const tuvalTik = ev => {
+    if (svg._suruklendi) return;          // kaydirma (pan) idi, secme
+    const id = gcSecimAdayi(svg, ev.clientX, ev.clientY);
+    if (id != null) gcOnizTik(doc, id, ev);
+    else if (doc.gc.rapor && doc.gc.rapor.aktif)
+      bildir("Tiklama bir bloga denk gelmedi — konturun uzerine ya da "
+           + "numarasina tiklayin.", true);
+  };
+  svg._gcSecHandler = tuvalTik;
+  svg.addEventListener("click", tuvalTik);
+  svg.style.cursor = (doc.gc.rapor && doc.gc.rapor.siraMod) ? "crosshair" : "pointer";
   zoomEtkinlestir(svg);
+}
+
+// Tiklama noktasindaki blogun id'si (yoksa null): once kontur cizgisine yakin
+// olan, degilse tiklamayi iceren EN KUCUK (en icteki) kontur.
+function gcSecimAdayi(svg, clientX, clientY) {
+  const bloklar = svg._gcBloklar || [];
+  if (!bloklar.length) return null;
+  const [cx, cy] = ekranToTuval(svg, clientX, clientY);
+  const ESIK = 9;                         // "cizgiye tiklama" esigi (px)
+  let yakin = null, ic = null;
+  bloklar.forEach(b => {
+    if (b.poly.length < 2) return;
+    const m = poligonMesafe(b.poly, cx, cy);
+    const a = poligonAlan(b.poly);
+    if (m <= ESIK && (!yakin || m < yakin.m || (m === yakin.m && a < yakin.a)))
+      yakin = { id: b.id, m, a };
+    if (noktaIcinde(b.poly, cx, cy) && (!ic || a < ic.a)) ic = { id: b.id, a };
+  });
+  if (yakin) return yakin.id;
+  return ic ? ic.id : null;
+}
+
+// Onizlemede bir bloga tiklandi. Hata-bildir modunda tikla = hatali isaretle;
+// "dogru sirayi isaretle" acikken tikla = siradaki numarayi ata.
+function gcOnizTik(doc, id, e) {
+  const R = doc.gc.rapor;
+  if (R && R.aktif && R.siraMod) { gcDogruSiraAta(doc, id); return; }
+  const poz = doc.gc.sira.indexOf(id);
+  if (poz < 0) return;
+  if (R && R.aktif && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+    // Rapor modunda sade tik = ac/kapa (tekli secime dusurup digerlerini
+    // silmek rapor toplarken istenmez).
+    const sec = doc.gc.secim;
+    if (sec.has(id)) { sec.delete(id); bildir(`Blok ${poz + 1} secimden cikarildi.`); }
+    else { sec.add(id); bildir(`Blok ${poz + 1} hatali olarak isaretlendi (${sec.size} oge).`); }
+    doc.gc.capa = id;
+    gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); gcRaporListe(doc);
+    return;
+  }
+  gcSecimTik(doc, poz, e);
+  gcRaporListe(doc);
+}
+
+// "Dogru sirayi isaretle" modu: tiklanan bloklara 1, 2, 3… atanir.
+function gcSiraModToggle(doc) {
+  const R = doc.gc.rapor;
+  R.siraMod = !R.siraMod;
+  R.sayac = 0;
+  const b = $("g_rapor_sira");
+  if (b) { b.classList.toggle("hayalet", !R.siraMod);
+    b.textContent = R.siraMod ? "Sira isaretlemeyi bitir" : "Dogru sirayi isaretle"; }
+  gcSvg(doc);
+  bildir(R.siraMod
+    ? "Sira isaretleme acik — bloklara ISTEDIGIN SIRAYLA tikla (1, 2, 3…)."
+    : "Sira isaretleme kapandi.");
+}
+
+function gcDogruSiraAta(doc, id) {
+  const R = doc.gc.rapor;
+  const k = R.notlar.get(id) || {};
+  if (k.dogru_sira) {                     // ayni bloga tekrar tik = geri al
+    delete k.dogru_sira; R.notlar.set(id, k);
+    bildir(`Blok ${doc.gc.sira.indexOf(id) + 1} sira isareti kaldirildi.`);
+  } else {
+    R.sayac = (R.sayac || 0) + 1;
+    k.dogru_sira = R.sayac; R.notlar.set(id, k);
+    doc.gc.secim.add(id);                 // isaretlenen blok rapora da girer
+    bildir(`Blok ${doc.gc.sira.indexOf(id) + 1} -> dogru sira ${R.sayac}.`);
+  }
+  gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); gcRaporListe(doc);
 }
 
 // Onizlemedeki numaraya cift tik -> soldaki listede o bloga kaydir + vurgula.
@@ -1364,19 +1682,26 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   // testi (dxfSecimAdayi) onu adaylardan cikarsin.
   const disH = rapAktif ? enDisVektor(varliklar) : null;
   svg._disHandle = disH;
+  // Butunluk denetiminde SAPAN vektorler (geometrisi oncesi/sonrasi farkli)
+  const sapan = (rapor && rapor.sapan) || new Set();
   varliklar.forEach(v => {
     const riskli = rs.has(v.handle);
+    const bozuk = sapan.has(v.handle);
     const secili = rapAktif && rapor.secim.has(v.handle);
     const dis = rapAktif && v.handle === disH;   // secilemeyen dis sinir
+    const vurgu = secili || riskli || bozuk;
     const attr = { d: komutYol(v.d, T, v.kapali), fill:"none",
-      stroke: secili ? "#ff9f0a" : (riskli ? "#ff3b30" : "var(--acc)"),
-      "stroke-width": (secili||riskli)?2.2:1.3,
-      "vector-effect": "non-scaling-stroke", opacity: (secili||riskli)?.98:.85 };
+      stroke: secili ? "#ff9f0a" : bozuk ? "#bf5af2" : (riskli ? "#ff3b30" : "var(--acc)"),
+      "stroke-width": vurgu?2.2:1.3,
+      "vector-effect": "non-scaling-stroke", opacity: vurgu?.98:.85 };
     if (dis) { attr.stroke = "var(--metin2)"; attr["stroke-dasharray"] = "7 5";
       attr.opacity = .5; }
     const p = ekle(svg, "path", attr);
     if (dis) { const t = document.createElementNS(SVGNS, "title");
       t.textContent = "Tabaka olcu siniri — secilemez"; p.appendChild(t); }
+    else if (bozuk) { const t = document.createElementNS(SVGNS, "title");
+      t.textContent = `#${v.handle} — butunluk UYARI: geometri oncesi/sonrasi ayni degil`;
+      p.appendChild(t); }
     if (rapAktif && !dis) p.style.cursor = "pointer";
     if (v.baslangic) { const [px,py]=T(v.baslangic[0],v.baslangic[1]);
       ekle(svg,"circle",{cx:px,cy:py,r:basGoster?5:4,"data-baser":basGoster?5:4,
@@ -1424,6 +1749,7 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
       if (svg._suruklendi) return;        // kaydirma (pan) idi, secme
       const h = dxfSecimAdayi(svg, ev.clientX, ev.clientY);
       if (h != null) rapor.onSelect(h);
+      else if (rapor.onMiss) rapor.onMiss();
     };
     svg._secHandler = sec;
     svg.addEventListener("click", sec);

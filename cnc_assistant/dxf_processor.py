@@ -64,6 +64,17 @@ def _ocs_yon_duzelt(entity, opts):
     return opts
 
 
+def _segment_orani(a, b, p):
+    """`p` noktasinin a->b segmenti uzerindeki parametresi (0..1). Lead-in
+    node'u segmenti bolerken genislik/yukseklik interpolasyonu icin gerekir."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    if L2 <= 1e-18:
+        return 0.0
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2
+    return max(0.0, min(1.0, t))
+
+
 def lwpolyline_optimize_et(pl, opts):
     """Kapali LWPOLYLINE icin: once gereksiz node'lari temizler, sonra
     baslangici hedef bolgeye tasir. Doner: (degisti_mi, silinen_node)."""
@@ -92,7 +103,15 @@ def lwpolyline_optimize_et(pl, opts):
     i, _uzun, eklenen = G.baslangic_indeksi_belirle(pts, **opts)
     if i is None and eklenen is not None:
         seg_idx, yeni_pt = eklenen
-        pts.insert(seg_idx + 1, yeni_pt)
+        # Lead-in node'u DUZ bir segmenti boler. Segment genislik (taper)
+        # tasiyorsa bolme noktasindaki genislik interpole edilmeli; aksi halde
+        # 0/0 yazmak taper'i (dolayisiyla gercek formu) bozar.
+        a = pts[seg_idx]
+        b = pts[(seg_idx + 1) % len(pts)]
+        t = _segment_orani(a, b, yeni_pt)
+        wt = a[2] + t * (a[3] - a[2])
+        pts[seg_idx] = (a[0], a[1], a[2], wt, a[4])
+        pts.insert(seg_idx + 1, (yeni_pt[0], yeni_pt[1], wt, a[3], 0.0))
         i = seg_idx + 1
 
     degisti = silinen > 0
@@ -121,11 +140,16 @@ def polyline2d_optimize_et(pl, opts):
     if len(vlist) < 3:
         return False, 0
 
+    # NOT: 6. eleman Z'dir (yukseklik/elevation). Geometri katmani yalnizca
+    # 0..4 indekslerini kullanir; Z burada TASINIR ki hicbir vertex istemeden
+    # Z=0 duzlemine dusmesin (koordinat degisikligi olurdu).
     def vpt(v):
-        return (v.dxf.location.x, v.dxf.location.y,
+        loc = v.dxf.location
+        return (loc.x, loc.y,
                 v.dxf.get("start_width", 0.0),
                 v.dxf.get("end_width", 0.0),
-                v.dxf.get("bulge", 0.0))
+                v.dxf.get("bulge", 0.0),
+                loc.z)
 
     pts = [vpt(v) for v in vlist]
 
@@ -139,7 +163,7 @@ def polyline2d_optimize_et(pl, opts):
             kalan_idx = _eslestir_kalanlar(pts, sade)
             silinecek = [k for k in range(len(vlist)) if k not in kalan_idx]
             for k in sorted(silinecek, reverse=True):
-                pl.delete_vertices(k, 1)
+                del pl.vertices[k]
             vlist = list(pl.vertices)
             pts = [vpt(v) for v in vlist]
 
@@ -150,28 +174,38 @@ def polyline2d_optimize_et(pl, opts):
     i, _uzun, eklenen = G.baslangic_indeksi_belirle(pts, **opts)
     if i is None and eklenen is not None:
         seg_idx, yeni_pt = eklenen
+        a = pts[seg_idx]
+        b = pts[(seg_idx + 1) % len(pts)]
+        t = _segment_orani(a, b, yeni_pt)
+        wt = a[2] + t * (a[3] - a[2])          # bolme noktasindaki genislik
+        z = a[5] + t * (b[5] - a[5])           # yukseklik de interpole edilir
         kaynak_v = vlist[seg_idx]
         yeni_v = kaynak_v.copy()
-        yeni_v.dxf.location = (yeni_pt[0], yeni_pt[1], 0.0)
-        yeni_v.dxf.bulge = yeni_pt[4]
-        yeni_v.dxf.start_width = yeni_pt[2]
-        yeni_v.dxf.end_width = yeni_pt[3]
+        yeni_v.dxf.location = (yeni_pt[0], yeni_pt[1], z)
+        yeni_v.dxf.bulge = 0.0                 # bolunen segment DAIMA duzdur
+        yeni_v.dxf.start_width = wt
+        yeni_v.dxf.end_width = a[3]
+        kaynak_v.dxf.end_width = wt            # taper bolme noktasina cekilir
         pl.doc.entitydb.add(yeni_v)
-        vlist.insert(seg_idx + 1, yeni_v)
-        pts.insert(seg_idx + 1, yeni_pt)
+        yeni_v.dxf.owner = kaynak_v.dxf.owner
+        pl.vertices.insert(seg_idx + 1, yeni_v)
+        vlist = list(pl.vertices)
+        pts = [vpt(v) for v in vlist]
         i = seg_idx + 1
 
     degisti = silinen > 0
-    if i and i != 0:
-        veriler = [((p[0], p[1], 0.0), p[4], p[2], p[3]) for p in pts]
-        yeni_vlist = vlist[i:] + vlist[:i]
+    if i:
+        # Vertex NESNELERI yerinde kalir; yalnizca tasidiklari veri dondurulur.
+        # (ezdxf 1.x'te `Polyline.vertices` salt-okunur bir ozelliktir; nesne
+        # listesini degistirmek yerine verinin donmesi hem guvenli hem de
+        # katman/renk gibi vertex ozelliklerini korur.)
+        veriler = [(p[0], p[1], p[5], p[4], p[2], p[3]) for p in pts]
         veriler = veriler[i:] + veriler[:i]
-        for v, (loc, bulge, sw, ew) in zip(yeni_vlist, veriler):
-            v.dxf.location = loc
+        for v, (x, y, z, bulge, sw, ew) in zip(vlist, veriler):
+            v.dxf.location = (x, y, z)
             v.dxf.bulge = bulge
             v.dxf.start_width = sw
             v.dxf.end_width = ew
-        pl.vertices = yeni_vlist
         degisti = True
 
     return degisti, silinen
@@ -221,21 +255,31 @@ def cember_baslangic_kaydir(circle, msp):
 
 def adim1_baslangic_optimizasyonu(msp, opts):
     kaydirilan, cember, toplam_silinen, atlanan = 0, 0, 0, []
+    # Butunluk denetimi icin: dokunulan varliklarin handle'lari ve cember ->
+    # polyline donusum haritasi (yeni handle -> eski CIRCLE handle).
+    dokunulan, donusen = set(), {}
     for e in list(msp):
         t = e.dxftype()
         if t == "LWPOLYLINE":
             if _kapali_mi_lwpolyline(e):
                 d, s = lwpolyline_optimize_et(e, opts)
                 toplam_silinen += s
+                if d or s:
+                    dokunulan.add(e.dxf.handle)
                 if d:
                     kaydirilan += 1
         elif t == "POLYLINE":
             d, s = polyline2d_optimize_et(e, opts)
             toplam_silinen += s
+            if d or s:
+                dokunulan.add(e.dxf.handle)
             if d:
                 kaydirilan += 1
         elif t == "CIRCLE":
-            cember_baslangic_kaydir(e, msp)
+            eski = e.dxf.handle
+            yeni = cember_baslangic_kaydir(e, msp)
+            donusen[yeni.dxf.handle] = eski
+            dokunulan.add(yeni.dxf.handle)
             cember += 1
         elif t in ("SPLINE", "ELLIPSE") and getattr(e, "closed", False):
             atlanan.append((t, e.dxf.handle))
@@ -251,11 +295,231 @@ def adim1_baslangic_optimizasyonu(msp, opts):
         print(f"[Adim 1] NOT: Kapali {t} (handle {h}) parametrik oldugundan "
               f"baslangici guvenle kaydirilamaz; oldugu gibi korundu.")
     return {"kaydirilan": kaydirilan, "silinen_node": toplam_silinen,
-            "cember": cember}
+            "cember": cember, "dokunulan": dokunulan, "donusen": donusen}
 
 
 # ----------------------------------------------------------------------
-# GEOMETRIK BUTUNLUK DOGRULAMA
+# VEKTOR-BAZLI (HER BIR VEKTOR ICIN) BUTUNLUK DOGRULAMA
+# ----------------------------------------------------------------------
+#
+# Dokuman geneli (toplam cevre + genel bbox) kontrolu TEK BASINA yetmez:
+# bir vektorun bir koordinati kayarken toplam cevre/bbox degismeyebilir
+# (orn. bir vertex kendi konturu boyunca kayarsa, ya da iki parca birbirini
+# telafi ederse). Bu yuzden HER VEKTOR kendi icinde, ONCESI/SONRASI olarak
+# karsilastirilir:
+#
+#   1) bbox         - parca kaydi/olcegi degisti mi?
+#   2) cevre        - kontur uzunlugu degisti mi?
+#   3) alan         - kapali form degisti mi?
+#   4) nokta-bazli  - SONRASI'nin her noktasi ONCESI konturu UZERINDE mi
+#                     (ve tersi)? Baslangic noktasi dondugunde/node
+#                     eklenip silindiginde bile bu test gecer; ama tek bir
+#                     koordinat oynadiginda ANINDA yakalanir.
+#
+# (4) asil koruma; (1..3) ucuz on-elemedir.
+
+# Egrileri duz parcalara acarken kabul edilen azami sapma (cizim birimi).
+BUTUNLUK_FLATTEN = 0.005
+# Nokta-bazli karsilastirmada kabul edilen azami sapma. Iki farkli fazda
+# duzlestirilmis AYNI egri arasindaki olcum artefaktini (<= 2*FLATTEN)
+# absorbe eder, gercek koordinat kaymasini yakalar.
+BUTUNLUK_TOL = 0.02
+
+
+def _kontur_noktalari(e, sapma=BUTUNLUK_FLATTEN):
+    """Varligi duz cizgi parcalarina acar; [(x, y), ...] doner."""
+    p = _ezpath.make_path(e)
+    if p.start is None:
+        return []
+    return [(v.x, v.y) for v in p.flattening(sapma)]
+
+
+def _kontur_haritasi(doc, sapma=BUTUNLUK_FLATTEN):
+    """{handle: (tip, [(x, y), ...])} - her cizilebilir varligin konturu."""
+    harita = {}
+    for e in doc.modelspace():
+        if e.dxftype() not in ("LWPOLYLINE", "POLYLINE", "CIRCLE", "ARC",
+                               "LINE", "SPLINE", "ELLIPSE"):
+            continue
+        try:
+            pts = _kontur_noktalari(e, sapma)
+        except Exception:
+            continue
+        if pts:
+            harita[e.dxf.handle] = (e.dxftype(), pts)
+    return harita
+
+
+def _kontur_olculeri(pts):
+    """(bbox, cevre, alan) - kapali kontur varsayimiyla."""
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    bbox = (min(xs), min(ys), max(xs), max(ys))
+    n = len(pts)
+    cevre = 0.0
+    alan = 0.0
+    for i in range(n):
+        a, b = pts[i], pts[(i + 1) % n]
+        cevre += math.hypot(b[0] - a[0], b[1] - a[1])
+        alan += a[0] * b[1] - b[0] * a[1]
+    return bbox, cevre, abs(alan) / 2.0
+
+
+class _KonturIndeks:
+    """Bir konturun segmentleri uzerinde duzgun-izgara (uniform grid) indeksi.
+
+    Nokta-kontur mesafesi sorgusunu segment sayisindan bagimsiz hale getirir;
+    boylece binlerce vektorlu buyuk tabakalarda da butunluk denetimi hizli
+    kalir."""
+
+    def __init__(self, pts, hucre):
+        self.hucre = max(hucre, 1e-9)
+        self.kova = {}
+        n = len(pts)
+        self.seg = []
+        for i in range(n):
+            a, b = pts[i], pts[(i + 1) % n]
+            k = len(self.seg)
+            self.seg.append((a[0], a[1], b[0], b[1]))
+            # Segmentin gectigi tum hucrelere kaydet (bbox tarama yeterli).
+            i0, j0 = self._hucre(min(a[0], b[0]), min(a[1], b[1]))
+            i1, j1 = self._hucre(max(a[0], b[0]), max(a[1], b[1]))
+            for ii in range(i0, i1 + 1):
+                for jj in range(j0, j1 + 1):
+                    self.kova.setdefault((ii, jj), []).append(k)
+
+    def _hucre(self, x, y):
+        return int(math.floor(x / self.hucre)), int(math.floor(y / self.hucre))
+
+    # Halka taramasi icin ust sinir: hucre boyu seklin kosegenine gore
+    # secildiginden pratikte birkac halkada biter; bu yalnizca emniyet freni.
+    AZAMI_HALKA = 96
+
+    def uzaklik(self, x, y):
+        """(x, y) noktasinin kontura EN KISA uzakligi (her zaman sonlu).
+
+        Sorgu hucresinden disari dogru halka halka taranir. `halka` halkasi
+        tarandiginda `halka * hucre` mesafesindeki tum segmentler gorulmus
+        olur; bulunan en iyi deger bu siniri asmiyorsa kesin sonuctur."""
+        ci, cj = self._hucre(x, y)
+        en_iyi = float("inf")
+        for halka in range(self.AZAMI_HALKA + 1):
+            for ii in range(ci - halka, ci + halka + 1):
+                for jj in range(cj - halka, cj + halka + 1):
+                    if halka and abs(ii - ci) != halka and abs(jj - cj) != halka:
+                        continue          # ic halkalar zaten tarandi
+                    for k in self.kova.get((ii, jj), ()):
+                        ax, ay, bx, by = self.seg[k]
+                        d = _nokta_seg_uzaklik(x, y, ax, ay, bx, by)
+                        if d < en_iyi:
+                            en_iyi = d
+            if en_iyi <= halka * self.hucre:
+                return en_iyi             # kesin: daha yakini olamaz
+        if en_iyi == float("inf"):        # olmamali (kontur bos degil)
+            return self.AZAMI_HALKA * self.hucre
+        return en_iyi
+
+
+def _nokta_seg_uzaklik(px, py, ax, ay, bx, by):
+    dx, dy = bx - ax, by - ay
+    L2 = dx * dx + dy * dy
+    t = 0.0 if L2 <= 1e-18 else ((px - ax) * dx + (py - ay) * dy) / L2
+    t = max(0.0, min(1.0, t))
+    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
+
+
+def _azami_sapma(indeks, pts, tol, ornek=None):
+    """`pts` noktalarinin indekslenmis kontura AZAMI uzakligi (tek yon)."""
+    n = len(pts)
+    if not n:
+        return 0.0
+    if ornek and n > ornek:
+        adim = n / float(ornek)
+        secili = [pts[int(i * adim)] for i in range(ornek)]
+    else:
+        secili = pts
+    en = 0.0
+    for x, y in secili:
+        d = indeks.uzaklik(x, y)
+        if d > en:
+            en = d
+            if en > tol * 50:            # acikca bozuk; devam etmeye gerek yok
+                break
+    return en
+
+
+def varlik_butunluk(once_harita, sonra_harita, dokunulan=None, donusen=None,
+                    tol=BUTUNLUK_TOL, ornek=256):
+    """HER VEKTOR icin oncesi/sonrasi geometrik esligi dogrular.
+
+    once_harita/sonra_harita : `_kontur_haritasi` ciktilari
+    dokunulan : optimizasyonun degistirdigi handle'lar (None = hepsi)
+    donusen   : {yeni_handle: eski_handle} (CIRCLE -> polyline donusumu)
+
+    Doner: {"ok": bool, "kontrol": int, "sapan": [{handle, tip, neden,
+            sapma, bbox_fark, cevre_fark, alan_fark}, ...]}
+    """
+    donusen = donusen or {}
+    sapan = []
+    kontrol = 0
+
+    for handle, (tip, sonra_pts) in sonra_harita.items():
+        eski_handle = donusen.get(handle, handle)
+        onceki = once_harita.get(eski_handle)
+        if onceki is None:
+            # Optimizasyon yeni bir varlik uretmez; ureten tek yer CIRCLE
+            # donusumudur ve o `donusen` ile eslesir.
+            sapan.append({"handle": handle, "tip": tip,
+                          "neden": "oncesinde karsiligi yok", "sapma": None})
+            continue
+        if dokunulan is not None and handle not in dokunulan:
+            continue                     # dokunulmamis varlik: bire bir ayni
+        kontrol += 1
+        once_pts = onceki[1]
+
+        b1, c1, a1 = _kontur_olculeri(once_pts)
+        b2, c2, a2 = _kontur_olculeri(sonra_pts)
+        bbox_fark = max(abs(x - y) for x, y in zip(b1, b2))
+        cevre_fark = abs(c1 - c2)
+        alan_fark = abs(a1 - a2)
+
+        kose = math.hypot(b1[2] - b1[0], b1[3] - b1[1]) or 1.0
+        # Nokta-bazli iki yonlu kontrol: sonrasi -> oncesi ve oncesi -> sonrasi.
+        hucre = max(kose / 32.0, tol * 4)
+        i_once = _KonturIndeks(once_pts, hucre)
+        i_sonra = _KonturIndeks(sonra_pts, hucre)
+        sapma = max(_azami_sapma(i_once, sonra_pts, tol, ornek),
+                    _azami_sapma(i_sonra, once_pts, tol, ornek))
+
+        nedenler = []
+        if sapma > tol:
+            nedenler.append(f"kontur {sapma:.4f} birim kaydi")
+        if bbox_fark > tol:
+            nedenler.append(f"bbox {bbox_fark:.4f} degisti")
+        if c1 > 1e-9 and cevre_fark / c1 > 1e-3 and cevre_fark > tol:
+            nedenler.append(f"cevre {c1:.4f} -> {c2:.4f}")
+        if a1 > 1e-9 and alan_fark / a1 > 1e-3 and alan_fark > tol * kose:
+            nedenler.append(f"alan {a1:.4f} -> {a2:.4f}")
+        if nedenler:
+            sapan.append({"handle": handle, "tip": tip,
+                          "neden": "; ".join(nedenler),
+                          "sapma": round(sapma, 6),
+                          "bbox_fark": round(bbox_fark, 6),
+                          "cevre_fark": round(cevre_fark, 6),
+                          "alan_fark": round(alan_fark, 6)})
+
+    # Kaybolan varliklar (donusum disinda hicbir varlik kaybolmamali)
+    kalanlar = set(sonra_harita) | {donusen[h] for h in donusen if h in sonra_harita}
+    for handle, (tip, _pts) in once_harita.items():
+        if handle not in kalanlar:
+            sapan.append({"handle": handle, "tip": tip,
+                          "neden": "varlik kayboldu", "sapma": None})
+
+    return {"ok": not sapan, "kontrol": kontrol, "sapan": sapan}
+
+
+# ----------------------------------------------------------------------
+# GEOMETRIK BUTUNLUK DOGRULAMA (dokuman geneli)
 # ----------------------------------------------------------------------
 
 def _toplam_yol_uzunlugu(doc):
@@ -385,6 +649,7 @@ def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
     doc = ezdxf.readfile(giris)
     msp = doc.modelspace()
     oncesi = varlik_yollari(doc)
+    once_kontur = _kontur_haritasi(doc)      # vektor-bazli butunluk icin
     la, ba = _metrikler(doc)
     # Tabaka olcusunu baslangic optimizasyonuna aktar: cok uzun (riskli) yatay
     # seritlerin baslangici ust-orta/sag-uste kayar (bkz. geometry).
@@ -406,11 +671,23 @@ def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
         cevre_tol, bbox_tol = 1e-3, 0.05
     else:
         cevre_tol, bbox_tol = 1e-6, 1e-7
-    dogrulama = _metrik_dogrula(la, ba, lb, bb, cevre_tol, bbox_tol)
+    genel_ok = _metrik_dogrula(la, ba, lb, bb, cevre_tol, bbox_tol)
+
+    # HER BIR VEKTOR icin ayri ayri butunluk: dokuman geneli kontrol tek basina
+    # tek bir vektorun kayan koordinatini kacirabilir.
+    sonra_kontur = _kontur_haritasi(doc)
+    vektor = varlik_butunluk(once_kontur, sonra_kontur,
+                             stats.get("dokunulan"), stats.get("donusen"))
+    dogrulama = bool(genel_ok and vektor["ok"])
     if dogrulama:
-        print(f"[Dogrulama] OK - bbox ve toplam cevre ({lb:.4f}) korundu.")
+        print(f"[Dogrulama] OK - bbox ve toplam cevre ({lb:.4f}) korundu; "
+              f"{vektor['kontrol']} vektorun her biri birebir ayni.")
     else:
-        print("[Dogrulama] UYARI! Geometrik fark tespit edildi.")
+        if not genel_ok:
+            print("[Dogrulama] UYARI! Dokuman geneli geometrik fark tespit edildi.")
+        for s in vektor["sapan"]:
+            print(f"[Dogrulama] UYARI! Vektor {s['handle']} ({s['tip']}): "
+                  f"{s['neden']}")
     sonrasi = varlik_yollari(doc)
     return {
         "giris": giris, "doc": doc,
@@ -421,6 +698,8 @@ def optimize_doc(giris, opts, alan_orani=0.10, boyut_orani=0.50):
         "riskli_handlelar": {h for _, h, _, _, _ in riskli},
         "oncesi": oncesi, "sonrasi": sonrasi,
         "dogrulama": dogrulama, "cevre": lb,
+        "genel_dogrulama": genel_ok,
+        "vektor_butunluk": vektor,
     }
 
 
@@ -429,7 +708,9 @@ def optimize_ve_kaydet(giris, cikti, opts, alan_orani=0.10, boyut_orani=0.50):
     sonuc = optimize_doc(giris, opts, alan_orani, boyut_orani)
     sonuc["doc"].saveas(cikti)
     print("-" * 62)
-    sonuc["dogrulama"] = butunluk_dogrula(giris, cikti)
+    # Diskteki dosya uzerinden hem dokuman geneli hem de vektor-bazli kontrol.
+    sonuc["dogrulama"] = bool(butunluk_dogrula(giris, cikti)
+                              and sonuc["vektor_butunluk"]["ok"])
     print(f"[Adim 1] Cikti dosyasi: {cikti}")
     sonuc["cikti"] = cikti
     return sonuc

@@ -22,9 +22,11 @@ Tarayicida http://127.0.0.1:8000 acilir. Arayuz:
 
 import base64
 import json
+import math
 import os
 import tempfile
 import threading
+import traceback
 import urllib.parse
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -292,11 +294,17 @@ def api_dxf_onizle(veri):
                         "riskli": sonuc["riskli_handlelar"]}
     riskli_kutu = [{"merkez": m, "w": w, "h": h}
                    for _, _, m, w, h in sonuc["riskli"]]
+    vb = sonuc.get("vektor_butunluk") or {"ok": True, "kontrol": 0, "sapan": []}
     return {
         "kaydirilan": sonuc["kaydirilan"],
         "silinen_node": sonuc["silinen_node"],
         "cember": sonuc["cember"],
         "dogrulama": sonuc["dogrulama"],
+        "genel_dogrulama": sonuc.get("genel_dogrulama", sonuc["dogrulama"]),
+        # Vektor-bazli butunluk: hangi vektorde ne kadar sapma var?
+        "butunluk": {"ok": vb["ok"], "kontrol": vb["kontrol"],
+                     "sapan": vb["sapan"]},
+        "sapan_handlelar": [s["handle"] for s in vb["sapan"] if s.get("handle")],
         "cevre": sonuc["cevre"],
         "oncesi": [_varlik_json(v) for v in sonuc["oncesi"]],
         "sonrasi": [_varlik_json(v) for v in sonuc["sonrasi"]],
@@ -340,6 +348,9 @@ def api_dxf_rapor(veri):
     cikarir (diske yazar, indirme linki doner). secimler: [{handle,
     dogru_baslangic:[x,y]|null, not:str}]."""
     yol = veri["yol"]
+    secimler = veri.get("secimler") or []
+    if not secimler:
+        return {"hata": "Hata raporu icin once en az bir vektor secin."}
     if yol not in _DXF_ONIZLE and not os.path.isfile(yol):
         return {"hata": "Once onizleyin."}
     o = _DXF_ONIZLE.get(yol)
@@ -351,14 +362,20 @@ def api_dxf_rapor(veri):
         birim = D.ezdxf.readfile(yol).header.get("$INSUNITS")
     except Exception:
         pass
-    rp = RAPOR.dxf_rapor(os.path.basename(yol), birim,
-                         [_varlik_json(v) for v in o["sonrasi"]],
-                         veri.get("secimler", []), veri.get("genel_not", ""))
+    varliklar = [_varlik_json(v) for v in o["sonrasi"]]
+    rp = RAPOR.dxf_rapor(os.path.basename(yol), birim, varliklar,
+                         secimler, veri.get("genel_not", ""))
+    if not rp["ogeler"]:
+        # Secilen handle'lar onizlemedekilerle eslesmiyor (orn. arada dosya
+        # yeniden islendi). Bos dosya yazip "hazir" demek yerine acikca soyle.
+        return {"hata": "Secilen vektorler guncel onizlemede bulunamadi; "
+                        "'Yeniden Isle' deyip secimi tazeleyin."}
     cikti = _cikti_yolu(yol, veri, "_hata_raporu", ".json")
     with open(cikti, "w", encoding="utf-8") as f:
         json.dump(rp, f, ensure_ascii=False, indent=2)
     _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
+            "atlanan": len(secimler) - len(rp["ogeler"]),
             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
 
 
@@ -366,17 +383,24 @@ def api_gcode_rapor(veri):
     """Arayuzde secilen HATALI kesim bloklarini makine-okunur JSON hata
     raporuna cikarir. secimler: [{sira, dogru_sira:int|null, not:str}]."""
     yol = veri["yol"]
+    secimler = veri.get("secimler") or []
+    if not secimler:
+        return {"hata": "Hata raporu icin once en az bir kesim blogu secin."}
     if yol not in _DURUM:
         return {"hata": "Once dosyayi yukleyin."}
     d = _DURUM[yol]
     ozet = _ozet_bloklar(d["orijinal"])
     rp = RAPOR.gcode_rapor(os.path.basename(yol), d["prog"].birim, ozet,
-                           veri.get("secimler", []), veri.get("genel_not", ""))
+                           secimler, veri.get("genel_not", ""))
+    if not rp["ogeler"]:
+        return {"hata": "Secilen bloklar dosyada bulunamadi; dosyayi yeniden "
+                        "yukleyip secimi tazeleyin."}
     cikti = _cikti_yolu(yol, veri, "_hata_raporu", ".json")
     with open(cikti, "w", encoding="utf-8") as f:
         json.dump(rp, f, ensure_ascii=False, indent=2)
     _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
+            "atlanan": len(secimler) - len(rp["ogeler"]),
             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
 
 
@@ -699,6 +723,36 @@ API = {
 # HTTP isleyici
 # ----------------------------------------------------------------------
 
+def _json_yedek(o):
+    """json.dumps'in kodlayamadigi degerler icin son care. Sessizce cokmek
+    yerine (istemci hicbir yanit alamaz) makul bir karsilik uretir."""
+    if isinstance(o, (set, frozenset)):
+        return list(o)
+    return str(o)
+
+
+def _sonlu(o):
+    """NaN/Infinity degerlerini None yapar (tarayicidaki JSON.parse bunlari
+    kabul etmez; temizlenmezse yanit istemci tarafinda sessizce cop olur)."""
+    if isinstance(o, float):
+        return o if math.isfinite(o) else None
+    if isinstance(o, dict):
+        return {k: _sonlu(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_sonlu(v) for v in o]
+    return o
+
+
+def _json_govde(sonuc):
+    """Sonucu KESIN gecerli JSON'a cevirir."""
+    try:
+        return json.dumps(sonuc, ensure_ascii=False, allow_nan=False,
+                          default=_json_yedek)
+    except ValueError:                 # NaN/Infinity var -> temizleyip yeniden
+        return json.dumps(_sonlu(sonuc), ensure_ascii=False, allow_nan=False,
+                          default=_json_yedek)
+
+
 class Isleyici(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass  # sessiz
@@ -761,13 +815,18 @@ class Isleyici(BaseHTTPRequestHandler):
             self._gonder(404, json.dumps({"hata": "bilinmeyen uc"}))
             return
         uzunluk = int(self.headers.get("Content-Length", 0))
+        # DIKKAT: JSON kodlama da bu try icinde olmali. Disarida kalirsa
+        # kodlanamayan bir deger istisna atar, istemciye HIC yanit gitmez ve
+        # arayuzde "tusa bastim, hicbir sey olmadi" goruntusu olusur.
         try:
             veri = json.loads(self.rfile.read(uzunluk) or b"{}")
             sonuc = fn(veri)
+            govde = _json_govde(sonuc)
         except Exception as e:      # noqa: BLE001 - kullaniciya hatayi don
-            self._gonder(200, json.dumps({"hata": str(e)}))
+            traceback.print_exc()
+            self._gonder(200, json.dumps({"hata": f"{type(e).__name__}: {e}"}))
             return
-        self._gonder(200, json.dumps(sonuc, ensure_ascii=False))
+        self._gonder(200, govde)
 
 
 def calistir(port=8000, ac=False, host="127.0.0.1"):
