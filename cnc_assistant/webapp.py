@@ -414,12 +414,20 @@ def api_gcode_yukle(veri):
                 "uyarilar": ["Dosyada G91 (artimli mod) var; siralama "
                              "guvenlik nedeniyle kapatildi."]}
     bloklar = _ozet_bloklar(orijinal)
-    onerilen = _sirala_idler(yol, "sol-alt")
+    # ALGORITMASIZ KULLANIM: otomatik=False ise siralama motoru HIC
+    # calistirilmaz; dosya kendi ORIJINAL sirasiyla acilir ve arayuzun diger
+    # tum ozellikleri (onizleme, hata bildirimi, koprü, aralik kaydi,
+    # baslangic tasima) aynen kullanilabilir.
+    otomatik = bool(veri.get("otomatik", True))
+    orijinal_sira = list(range(len(orijinal)))
+    onerilen = _sirala_idler(yol, "sol-alt") if otomatik else orijinal_sira
     return {"guvenli": True, "uyarilar": prog.uyarilar,
             "sabit_son": prog.sabit_son is not None,
             "birim": prog.birim,
             "tespit_feed": GC.kesim_feed_tespit(prog.satirlar),
-            "karsilastir": prog.karsilastir(),
+            "karsilastir": prog.karsilastir() if otomatik else None,
+            "otomatik": otomatik,
+            "orijinal_sira": orijinal_sira,
             "bloklar": bloklar, "onerilen_sira": onerilen}
 
 
@@ -467,19 +475,93 @@ def api_gcode_dogrula(veri):
             "destek_uyari": sum(1 for r in rapor if not r["kritik"])}
 
 
+def _aralik_pozlari(veri, n):
+    """Kaydedilecek POZISYONLARI (0-tabanli, siradaki yer) belirler.
+
+    veri: bas/son (1-tabanli, dahil) ya da pozlar[]; mod: "sadece"|"cikar".
+    Aralik verilmemisse None doner (= tum bloklar)."""
+    poz = None
+    if veri.get("pozlar") is not None:
+        poz = {int(p) for p in veri["pozlar"] if 0 <= int(p) < n}
+    elif veri.get("bas") is not None or veri.get("son") is not None:
+        bas = int(veri.get("bas") or 1)
+        son = int(veri.get("son") or n)
+        if bas > son:
+            bas, son = son, bas
+        bas = max(1, bas)
+        son = min(n, son)
+        poz = set(range(bas - 1, son))
+    if poz is None:
+        return None
+    if veri.get("mod") == "cikar":
+        poz = set(range(n)) - poz
+    return sorted(poz)
+
+
 def api_gcode_kaydet(veri):
+    """Siralanmis dosyayi yazar. Aralik verilirse SADECE o kesim bloklari
+    (ya da mod='cikar' ile onlar HARIC digerleri) yazilir; HEADER ve FOOTER
+    her durumda aynen korunur."""
     yol = veri["yol"]
     if yol not in _DURUM:
         return {"hata": "Once dosyayi yukleyin."}
     d = _DURUM[yol]
     sira = veri["sira"]
     d["prog"].bloklar = [d["orijinal"][i] for i in sira]
+
+    pozlar = _aralik_pozlari(veri, len(sira))
+    if pozlar is not None and not pozlar:
+        return {"hata": "Secilen aralikta yazilacak kesim blogu kalmadi."}
+    if pozlar is None:
+        yazilacak = None                       # tumu (sabit_son dahil)
+        yazilan = len(sira)
+    else:
+        yazilacak = [d["orijinal"][sira[p]] for p in pozlar]
+        yazilan = len(yazilacak)
+
     cikti = _cikti_yolu(yol, veri, "_reordered", ".tap")
-    d["prog"].yaz(cikti)
+    d["prog"].yaz(cikti, bloklar=yazilacak)
     _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti, "ihlaller": d["prog"].icerme_ihlalleri(),
             "bosta_yol": d["prog"].bosta_yol(),
+            "yazilan": yazilan, "toplam": len(sira),
+            "kismi": pozlar is not None,
             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+
+def api_gcode_baslangic(veri):
+    """Bir kesim blogunun BASLANGIC (lead-in) noktasini kontur uzerinde
+    baska bir yere tasir. Geometri birebir korunur; yalnizca kesime nereden
+    baslandigi degisir. veri: {yol, id, nokta: [x, y], bol: bool}."""
+    yol = veri["yol"]
+    if yol not in _DURUM:
+        return {"hata": "Once dosyayi yukleyin."}
+    d = _DURUM[yol]
+    i = int(veri["id"])
+    if not (0 <= i < len(d["orijinal"])):
+        return {"hata": f"Blok yok: {i}"}
+    nokta = veri.get("nokta")
+    if not nokta or len(nokta) < 2:
+        return {"hata": "Hedef nokta verilmedi."}
+
+    eski = d["orijinal"][i]
+    yeni, bilgi = GC.blok_baslangic_tasi(
+        eski, (float(nokta[0]), float(nokta[1])), bol=veri.get("bol", True))
+    if bilgi.get("hata"):
+        return {"hata": bilgi["hata"]}
+    if not bilgi.get("degisti"):
+        return {"degisti": False, "bilgi": "Baslangic zaten bu noktada.",
+                "blok": _ozet_bloklar([yeni])[0] if yeni else None}
+
+    # Blogu yerinde degistir (id_map yeni nesneye tasinir)
+    d["orijinal"][i] = yeni
+    d["id_map"][id(yeni)] = i
+    d["id_map"].pop(id(eski), None)
+    return {"degisti": True, "id": i,
+            "baslangic": bilgi["baslangic"],
+            "yeni_node": bilgi["yeni_node"],
+            "eski_baslangic": bilgi["eski_baslangic"],
+            "blok": _ozet_bloklar(d["orijinal"])[i]}
 
 
 _ONIZ_FORMATLAR = {"pdf", "png", "svg"}
@@ -709,6 +791,7 @@ API = {
     "/api/gcode/sirala": api_gcode_sirala,
     "/api/gcode/dogrula": api_gcode_dogrula,
     "/api/gcode/kaydet": api_gcode_kaydet,
+    "/api/gcode/baslangic": api_gcode_baslangic,
     "/api/gcode/karsilastir": api_gcode_karsilastir,
     "/api/gcode/tablar": api_gcode_tablar,
     "/api/yukle": api_yukle,

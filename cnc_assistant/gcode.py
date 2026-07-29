@@ -920,6 +920,194 @@ def _kesim_sonu_idx(blok):
 
 
 # ----------------------------------------------------------------------
+# BLOK BASLANGIC (LEAD-IN) NOKTASI TASIMA
+# ----------------------------------------------------------------------
+#
+# Kapali bir kesim blogunun GEOMETRISI aynen korunarak, kesime BASLADIGI
+# nokta kontur uzerinde baska bir yere alinir. Yontem: kesim hamlelerinin
+# olusturdugu DONGU dondurulur (rotate). Her hamle satiri OLDUGU GIBI
+# tasinir; yalnizca sirasi degisir ve G0 konumlama satirindaki X/Y yeni
+# baslangica cekilir.
+#
+# Neden guvenli: G90 (mutlak) modda her hamle satiri kendi bitis noktasini
+# tasir; yay (G2/G3) satirlarindaki I/J ise KENDI baslangicina goredir. Bir
+# donguyu dondurmek ardisik ciftleri (onceki -> sonraki) bozmaz, dolayisiyla
+# I/J degerleri gecerli kalir. Tek istisna dikis (seam) noktasidir ve o da
+# dongu kapali oldugu icin tutarlidir.
+#
+# Yay uzerinde YENI nokta yaratilmaz (I/J yeniden hesaplamak gerekirdi);
+# hedef bir yaya denk gelirse en yakin MEVCUT kose kullanilir. Duz (G1)
+# segmentler ise tam hedefte ikiye bolunebilir.
+
+
+def _hareket_mi(w, g):
+    return g in (0.0, 1.0, 2.0, 3.0) and ("X" in w or "Y" in w)
+
+
+def blok_coz(blok):
+    """Blogu (on_ek, segmentler, son_ek) olarak ayirir.
+
+    on_ek      : G0 konumlama + dalis satirlari (ilk kesim hamlesine kadar)
+    segmentler : [{"satir": str, "g": 1|2|3, "bas": (x,y), "son": (x,y),
+                   "feed": float|None}] - XY duzlemindeki kesim hamleleri
+    son_ek     : kesimden sonraki satirlar (geri cekme vb.)
+
+    Kesim hamlesi bulunamazsa segmentler bostur."""
+    on_ek, segmentler, son_ek = [], [], []
+    g = None
+    feed = None
+    x, y = blok_bas_xy(blok)
+    ilk_kesim = None
+    for i, s in enumerate(blok):
+        w = satir_kelimeleri(s)
+        if "G" in w and w["G"] in (0.0, 1.0, 2.0, 3.0):
+            g = w["G"]
+        if "F" in w:
+            feed = w["F"]
+        if g in (1.0, 2.0, 3.0) and ("X" in w or "Y" in w):
+            if ilk_kesim is None:
+                ilk_kesim = i
+            nx = w.get("X", x)
+            ny = w.get("Y", y)
+            segmentler.append({"satir": s, "g": g, "bas": (x, y),
+                               "son": (nx, ny), "feed": feed})
+            x, y = nx, ny
+        elif ilk_kesim is None:
+            on_ek.append(s)
+        else:
+            son_ek.append(s)
+    if ilk_kesim is None:
+        return list(blok), [], []
+    return on_ek, segmentler, son_ek
+
+
+def blok_kapali_mi(blok, tol=1e-6):
+    """Kesim yolu kapali mi (son nokta = ilk nokta)?"""
+    _on, seg, _son = blok_coz(blok)
+    if len(seg) < 2:            # 2 yay (yarim daire + yarim daire) de kapalidir
+        return False
+    a, b = seg[0]["bas"], seg[-1]["son"]
+    return math.hypot(a[0] - b[0], a[1] - b[1]) <= tol
+
+
+def _xy_degistir(satir, x, y):
+    """Satirdaki X ve Y kelimelerini yeni degerlerle degistirir (bicimi ve
+    diger kelimeleri korur)."""
+    def _yaz(m):
+        harf = m.group(1).upper()
+        if harf == "X":
+            return f"{m.group(1)}{_sayi(x)}"
+        if harf == "Y":
+            return f"{m.group(1)}{_sayi(y)}"
+        return m.group(0)
+    return re.sub(r"([XxYy])\s*([-+]?\d*\.?\d+)", _yaz, satir)
+
+
+def _sayi(v):
+    """G-code icin kompakt sayi bicimi (gereksiz sifirlar atilir)."""
+    s = f"{v:.4f}".rstrip("0").rstrip(".")
+    return s if s not in ("", "-") else "0"
+
+
+def _nokta_seg_izdusum(a, b, p):
+    """p'nin a->b uzerindeki izdusumu ve parametre (t, nokta, uzaklik)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    if L2 <= 1e-18:
+        return 0.0, a, math.hypot(p[0] - a[0], p[1] - a[1])
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2
+    t = max(0.0, min(1.0, t))
+    c = (a[0] + t * dx, a[1] + t * dy)
+    return t, c, math.hypot(p[0] - c[0], p[1] - c[1])
+
+
+def blok_baslangic_tasi(blok, hedef, bol=True, tol_orani=0.02):
+    """Kapali bir kesim blogunun baslangic (lead-in) noktasini `hedef`e
+    (x, y) en yakin kontur konumuna tasir. GEOMETRI DEGISMEZ.
+
+    bol=True ise hedef DUZ (G1) bir segmentin ortasina denk geldiginde o
+    segment tam hedefte ikiye bolunur; yay (G2/G3) segmentleri ASLA
+    bolunmez (I/J yeniden hesaplanmasi gerekirdi) - en yakin mevcut kose
+    kullanilir.
+
+    Doner: (yeni_blok, bilgi). Basarisizsa (blok, {"hata": ...})."""
+    on_ek, seg, son_ek = blok_coz(blok)
+    if len(seg) < 2:
+        return blok, {"hata": "Blokta tasinabilir bir kesim yolu yok."}
+    if not blok_kapali_mi(blok):
+        return blok, {"hata": "Kesim yolu kapali degil; baslangic tasinamaz."}
+
+    noktalar = [s["bas"] for s in seg]
+    xs = [p[0] for p in noktalar]
+    ys = [p[1] for p in noktalar]
+    kose = math.hypot(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+    kabul = kose * tol_orani
+
+    # 1) Hedefe en yakin MEVCUT kose
+    k_idx = min(range(len(noktalar)),
+                key=lambda i: (noktalar[i][0] - hedef[0]) ** 2
+                + (noktalar[i][1] - hedef[1]) ** 2)
+    k_uzak = math.hypot(noktalar[k_idx][0] - hedef[0],
+                        noktalar[k_idx][1] - hedef[1])
+
+    # 2) Duz segmentler uzerinde daha yakin bir nokta var mi?
+    en_iyi = None
+    if bol:
+        for i, s in enumerate(seg):
+            if s["g"] != 1.0:                     # yay: bolunmez
+                continue
+            t, c, d = _nokta_seg_izdusum(s["bas"], s["son"], hedef)
+            if 1e-9 < t < 1 - 1e-9 and (en_iyi is None or d < en_iyi[2]):
+                en_iyi = (i, c, d, t)
+
+    if en_iyi is not None and en_iyi[2] < k_uzak and k_uzak > kabul:
+        # Duz segmenti tam hedefte ikiye bol, yeni koseden basla
+        i, c, _d, _t = en_iyi
+        s = seg[i]
+        ilk = dict(s)
+        ilk["satir"] = _xy_degistir(s["satir"], c[0], c[1])
+        ilk["son"] = c
+        ikinci = dict(s)
+        ikinci["bas"] = c
+        seg = seg[:i] + [ilk, ikinci] + seg[i + 1:]
+        bas_idx = i + 1
+        yeni_nokta = True
+    else:
+        bas_idx = k_idx
+        yeni_nokta = False
+
+    if bas_idx == 0:
+        return blok, {"degisti": False, "baslangic": list(seg[0]["bas"]),
+                      "yeni_node": False}
+
+    dondu = seg[bas_idx:] + seg[:bas_idx]
+    yeni_bas = dondu[0]["bas"]
+
+    # Besleme guvenligi: donduruldukten sonra ILK kesim hamlesi F tasimiyorsa
+    # makine modal olarak DALIS beslemesini kullanirdi. Orijinalde o segment
+    # icin gecerli olan beslemeyi acikca yaz.
+    ilk = dondu[0]
+    if "F" not in satir_kelimeleri(ilk["satir"]) and ilk["feed"]:
+        ilk = dict(ilk)
+        ilk["satir"] = ilk["satir"].rstrip() + f" F{_sayi(ilk['feed'])}"
+        dondu[0] = ilk
+
+    # G0 konumlama satirindaki X/Y yeni baslangica cekilir (on_ek'te ilk
+    # X-Y iceren satir); geri kalan her sey aynen korunur.
+    yeni_on = list(on_ek)
+    for i, s in enumerate(yeni_on):
+        w = satir_kelimeleri(s)
+        if "X" in w and "Y" in w:
+            yeni_on[i] = _xy_degistir(s, yeni_bas[0], yeni_bas[1])
+            break
+
+    yeni_blok = yeni_on + [s["satir"] for s in dondu] + son_ek
+    return yeni_blok, {"degisti": True, "baslangic": [yeni_bas[0], yeni_bas[1]],
+                       "yeni_node": yeni_nokta,
+                       "eski_baslangic": list(seg[0]["bas"])}
+
+
+# ----------------------------------------------------------------------
 # Program modeli
 # ----------------------------------------------------------------------
 
@@ -1064,14 +1252,20 @@ class GCodeProgram:
         return ihlaller
 
     # -- cikti ---------------------------------------------------------
-    def yaz(self, cikti=None):
+    def yaz(self, cikti=None, bloklar=None):
+        """Programi diske yazar.
+
+        `bloklar` verilirse SADECE o kesim bloklari yazilir (alt-kume /
+        aralik kaydi). HEADER ve FOOTER her durumda AYNEN korunur --
+        post-processor'un basi ve sonu asla kurcalanmaz."""
         if cikti is None:
             kok, _ = os.path.splitext(self.yol)
             cikti = f"{kok}_reordered.tap"
+        govde = self.sirali_bloklar() if bloklar is None else list(bloklar)
         with open(cikti, "w", encoding="utf-8") as f:
             for s in self.header:
                 f.write(s + "\n")
-            for blok in self.sirali_bloklar():
+            for blok in govde:
                 for s in blok:
                     f.write(s + "\n")
             for s in self.footer:

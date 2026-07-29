@@ -229,11 +229,14 @@ async function yukle(doc) {
     if (!doc.veri.hata)
       onizEkle(doc, `${p.destek} · ${p.node_temiz ? "temiz" : "ham"}`);
   } else {
-    const g = await api("/api/gcode/yukle", { yol: doc.yol });
+    // Otomatik siralama KAPALI ise algoritma hic calistirilmaz; dosya kendi
+    // orijinal sirasiyla acilir, diger tum ozellikler yine kullanilabilir.
+    const oto = AYAR.al("gcOtomatik", true);
+    const g = await api("/api/gcode/yukle", { yol: doc.yol, otomatik: oto });
     doc.veri = g;
     if (g.guvenli) doc.gc = { bloklar: g.bloklar, sira: g.onerilen_sira.slice(),
       orijinal: g.bloklar.map(b => b.id),   // dosyadaki ORIJINAL sira (id 0..n-1)
-      tarih: [{ sira: g.onerilen_sira.slice(), etiket: "auto" }], aktif: 0,
+      tarih: [{ sira: g.onerilen_sira.slice(), etiket: oto ? "auto" : "orijinal" }], aktif: 0,
       canli: true, secim: new Set(), capa: null,
       karsilastir: AYAR.al("gcKarsi", false),
       feed: AYAR.al("gcFeed", g.tespit_feed || 1000),
@@ -703,6 +706,10 @@ function gcodeIcerik(doc) {
         <button class="dugme hayalet kucuk" data-mod="sol-alt">Auto (sol-alt→sag-ust)</button>
         <button class="dugme hayalet kucuk" data-mod="serpantin">Serpantin</button>
         <button class="dugme hayalet kucuk" data-mod="engel">Engel-farkindalik</button>
+        <button class="dugme hayalet kucuk" id="g_orijinal" title="Algoritmayi kullanma: dosyadaki orijinal sirayi geri getir">Orijinal sira</button>
+        <label class="anahtar" title="Kapaliyken dosya acilirken siralama algoritmasi HIC calistirilmaz; diger tum ozellikler yine kullanilir">
+          <input type="checkbox" id="g_oto" ${AYAR.al("gcOtomatik", true)?"checked":""}>
+          <span class="kutu"></span> Acilista otomatik sirala</label>
         <span class="ayrac"></span>
         <input type="text" class="alan kk" id="g_swap" placeholder="59 60">
         <button class="dugme hayalet kucuk" id="g_swapb">Yer degistir</button>
@@ -722,6 +729,32 @@ function gcodeIcerik(doc) {
         <button class="dugme hayalet kucuk" id="g_tamekran" title="Onizlemeyi tam ekran ac/kapat (F)">⛶ Tam ekran (F)</button>
         <div style="flex:1"></div>
         <span class="birim-cip">${g.birim ? g.birim : "birim?"}</span>
+      </div>
+      <div class="gc-arac" id="g_arac2">
+        <label class="anahtar" title="Bir numaradan baslayarak tikladikca artan sira ata">
+          <input type="checkbox" id="g_atama_ac"><span class="kutu"></span> <b>Sira ata</b></label>
+        <input type="number" class="alan kk" id="g_atama_bas" min="1" value="1"
+               title="Baslangic sira numarasi" style="width:78px">
+        <span class="kk2" id="g_atama_durum" style="min-width:150px"></span>
+        <span class="ayrac"></span>
+        <label class="anahtar" title="Onizlemede kontura tikla: kesime baslama noktasi oraya tasinir">
+          <input type="checkbox" id="g_bas_ac"><span class="kutu"></span> <b>Baslangic noktasi</b></label>
+        <span class="kk2" id="g_bas_durum" style="min-width:170px"></span>
+        <div style="flex:1"></div>
+      </div>
+      <div class="gc-arac" id="g_arac3">
+        <label class="anahtar" title="Sadece belirli bir araligi kaydet (header/footer aynen korunur)">
+          <input type="checkbox" id="g_ar_ac"><span class="kutu"></span> Aralik kaydet</label>
+        <select class="alan kk" id="g_ar_mod" style="width:170px" disabled>
+          <option value="sadece">Sadece secili aralik</option>
+          <option value="cikar">Secili araligi cikar</option>
+        </select>
+        <input type="number" class="alan kk" id="g_ar_bas" min="1" placeholder="bas" style="width:74px" disabled>
+        <span class="kk2">–</span>
+        <input type="number" class="alan kk" id="g_ar_son" min="1" placeholder="son" style="width:74px" disabled>
+        <button class="dugme hayalet kucuk" id="g_ar_secim" disabled title="Secili bloklarin arasini bas/son olarak al">Secimden al</button>
+        <span class="kk2" id="g_ar_bilgi"></span>
+        <div style="flex:1"></div>
         <input type="text" class="alan kk" id="g_kayit_ad" placeholder="kayit adi (bos=önek)" style="width:180px">
         <button class="dugme" id="g_kaydet">Kaydet (.tap)</button>
       </div>
@@ -754,6 +787,14 @@ function gcodeIcerik(doc) {
                 <button class="dugme hayalet kucuk" id="g_rapor_sira">Dogru sirayi isaretle</button>
                 <button class="dugme hayalet kucuk" id="g_rapor_bosalt">Secimi temizle</button>
               </div>
+              <div class="rapor-secici">
+                <span class="kk2">Aralik:</span>
+                <input type="number" class="alan kk" id="g_rapor_bas" min="1" placeholder="bas" style="width:74px">
+                <span class="kk2">–</span>
+                <input type="number" class="alan kk" id="g_rapor_son" min="1" placeholder="son" style="width:74px">
+                <button class="dugme hayalet kucuk" id="g_rapor_aralik">Araligi bildir</button>
+                <button class="dugme hayalet kucuk" id="g_rapor_tum">Tumunu bildir</button>
+              </div>
               <div id="g_rapor_liste" style="display:flex;flex-direction:column;gap:6px"></div>
               <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                 <input type="text" class="alan kk" id="g_rapor_not" placeholder="genel not (ops.)" style="flex:1;min-width:150px">
@@ -784,6 +825,68 @@ function gcodeIcerik(doc) {
     $("g_goster").onclick = () => gcCiz(doc, true);
     if ($("g_tamekran")) $("g_tamekran").onclick = () => onizTamEkranToggle();
     $("g_kaydet").onclick = () => gcKaydet(doc);
+    $("g_orijinal").onclick = () => gcOrijinalSira(doc);
+    $("g_oto").onchange = e => {
+      AYAR.yaz("gcOtomatik", e.target.checked);
+      bildir(e.target.checked
+        ? "Acilista otomatik siralama ACIK (sonraki dosyalarda gecerli)."
+        : "Acilista otomatik siralama KAPALI — dosyalar orijinal sirasiyla acilir.");
+    };
+
+    // ---- Sira atama modu (bir numaradan baslayarak tikladikca artan) ----
+    doc.gc.atama = doc.gc.atama || { aktif:false, sonraki:1 };
+    $("g_atama_bas").value = doc.gc.atama.sonraki;
+    $("g_atama_ac").checked = doc.gc.atama.aktif;
+    $("g_atama_ac").onchange = e => {
+      doc.gc.atama.aktif = e.target.checked;
+      if (e.target.checked) {
+        doc.gc.bas.aktif = false; $("g_bas_ac").checked = false;
+        doc.gc.atama.sonraki = Math.max(1, parseInt($("g_atama_bas").value) || 1);
+        bildir(`Sira atama acik — tikladigin blok ${doc.gc.atama.sonraki}. siraya gecer, sonra artar.`);
+      }
+      gcAtamaDurum(doc); gcSvg(doc);
+    };
+    $("g_atama_bas").onchange = () => {
+      doc.gc.atama.sonraki = Math.max(1, parseInt($("g_atama_bas").value) || 1);
+      gcAtamaDurum(doc);
+    };
+
+    // ---- Baslangic (lead-in) noktasi tasima ----
+    doc.gc.bas = doc.gc.bas || { aktif:false };
+    $("g_bas_ac").checked = doc.gc.bas.aktif;
+    $("g_bas_ac").onchange = e => {
+      doc.gc.bas.aktif = e.target.checked;
+      if (e.target.checked) {
+        doc.gc.atama.aktif = false; $("g_atama_ac").checked = false;
+        bildir("Baslangic noktasi modu — once blogu sec, sonra kontur uzerinde "
+             + "kesime baslamasini istedigin yere tikla.");
+      }
+      gcAtamaDurum(doc); gcSvg(doc);
+    };
+
+    // ---- Aralik kaydetme ----
+    doc.gc.aralik = doc.gc.aralik || { aktif:false, mod:"sadece", bas:null, son:null };
+    const arTazele = () => {
+      const a = doc.gc.aralik;
+      ["g_ar_mod","g_ar_bas","g_ar_son","g_ar_secim"].forEach(id => $(id).disabled = !a.aktif);
+      gcAralikBilgi(doc);
+    };
+    $("g_ar_ac").checked = doc.gc.aralik.aktif;
+    $("g_ar_mod").value = doc.gc.aralik.mod;
+    if (doc.gc.aralik.bas) $("g_ar_bas").value = doc.gc.aralik.bas;
+    if (doc.gc.aralik.son) $("g_ar_son").value = doc.gc.aralik.son;
+    $("g_ar_ac").onchange = e => { doc.gc.aralik.aktif = e.target.checked; arTazele(); };
+    $("g_ar_mod").onchange = e => { doc.gc.aralik.mod = e.target.value; gcAralikBilgi(doc); };
+    $("g_ar_bas").onchange = e => { doc.gc.aralik.bas = parseInt(e.target.value) || null; gcAralikBilgi(doc); };
+    $("g_ar_son").onchange = e => { doc.gc.aralik.son = parseInt(e.target.value) || null; gcAralikBilgi(doc); };
+    $("g_ar_secim").onclick = () => {
+      const poz = doc.gc.sira.map((id, i) => doc.gc.secim.has(id) ? i + 1 : -1).filter(i => i > 0);
+      if (!poz.length) { bildir("Once blok secin.", true); return; }
+      doc.gc.aralik.bas = Math.min(...poz); doc.gc.aralik.son = Math.max(...poz);
+      $("g_ar_bas").value = doc.gc.aralik.bas; $("g_ar_son").value = doc.gc.aralik.son;
+      gcAralikBilgi(doc);
+    };
+    arTazele();
     doc.gc.rapor = doc.gc.rapor || { aktif:false, notlar:new Map(), siraMod:false, sayac:0 };
     $("g_rapor_ac").onchange = e => {
       doc.gc.rapor.aktif = e.target.checked;
@@ -810,6 +913,27 @@ function gcodeIcerik(doc) {
       bildir(n ? `${n} secim temizlendi.` : "Zaten secim yoktu.");
     };
     $("g_rapor_sira").onclick = () => gcSiraModToggle(doc);
+    $("g_rapor_aralik").onclick = () => {
+      const n = doc.gc.sira.length;
+      let a = parseInt($("g_rapor_bas").value) || 1;
+      let b = parseInt($("g_rapor_son").value) || n;
+      if (a > b) { const t = a; a = b; b = t; }
+      a = Math.max(1, a); b = Math.min(n, b);
+      let ek = 0;
+      for (let i = a - 1; i < b; i++) if (!doc.gc.secim.has(doc.gc.sira[i])) {
+        doc.gc.secim.add(doc.gc.sira[i]); ek++; }
+      gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); gcRaporListe(doc);
+      bildir(ek ? `${a}–${b} araligindan ${ek} blok rapora eklendi (toplam ${doc.gc.secim.size}).`
+                : `${a}–${b} araligindaki bloklar zaten secili.`, !ek);
+    };
+    $("g_rapor_tum").onclick = () => {
+      const ek = doc.gc.sira.filter(id => !doc.gc.secim.has(id)).length;
+      doc.gc.sira.forEach(id => doc.gc.secim.add(id));
+      doc.gc.capa = doc.gc.sira[0];
+      gcListe(doc, doc.gc._ihl || new Set()); gcGrupCiz(doc); gcSvg(doc); gcRaporListe(doc);
+      bildir(ek ? `Tum bloklar rapora eklendi (${doc.gc.secim.size} oge).`
+                : "Zaten tum bloklar secili.", !ek);
+    };
     if (doc.gc.rapor.aktif) { $("g_rapor_ac").checked = true;
       $("g_rapor_govde").style.display = "flex"; }
     gcKarsilastirCiz(doc);
@@ -1035,16 +1159,43 @@ function gcGecmisCiz(doc) {
   });
 }
 
+// Aralik kaydinda kac blok yazilacagini canli gosterir.
+function gcAralikBilgi(doc) {
+  const el = $("g_ar_bilgi"); if (!el) return;
+  const a = doc.gc.aralik, n = doc.gc.sira.length;
+  if (!a || !a.aktif) { el.textContent = ""; return; }
+  let bas = Math.max(1, a.bas || 1), son = Math.min(n, a.son || n);
+  if (bas > son) { const t = bas; bas = son; son = t; }
+  const kac = son - bas + 1;
+  const yazilan = a.mod === "cikar" ? n - kac : kac;
+  el.innerHTML = yazilan > 0
+    ? `<b>${yazilan}</b>/${n} blok yazilacak (header/footer aynen korunur)`
+    : `<span class="uyari">yazilacak blok kalmiyor</span>`;
+}
+
 async function gcKaydet(doc) {
   const ad = $("g_kayit_ad") ? $("g_kayit_ad").value.trim() : "";
-  const s = await api("/api/gcode/kaydet", { yol: doc.yol, sira: doc.gc.sira,
-    dosya_adi: ad || undefined });
+  const a = doc.gc.aralik;
+  const istek = { yol: doc.yol, sira: doc.gc.sira, dosya_adi: ad || undefined };
+  if (a && a.aktif) {
+    istek.bas = a.bas || 1;
+    istek.son = a.son || doc.gc.sira.length;
+    istek.mod = a.mod;
+  }
   const d = $("g_durum");
-  if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`; return; }
+  if (d) d.innerHTML = `<span class="yukleniyor"></span> Kaydediliyor…`;
+  const s = await api("/api/gcode/kaydet", istek);
+  if (!d) return;
+  if (s.hata) { d.innerHTML = `<span class="uyari">${s.hata}</span>`;
+    bildir(s.hata, true); return; }
   let m = `<span class="ok">Kaydedildi:</span> ${s.cikti} · bosta yol: <b>${s.bosta_yol.toFixed(1)}</b>`;
+  if (s.kismi)
+    m += `<br><span class="ok">Kismi kayit:</span> ${s.yazilan}/${s.toplam} kesim blogu yazildi `
+       + `· <b>header ve footer aynen korundu</b>.`;
   if (s.ihlaller && s.ihlaller.length)
     m += `<br><span class="uyari">UYARI: ${s.ihlaller.length} icerme ihlali.</span>`;
   d.innerHTML = m;
+  bildir(s.kismi ? `Kaydedildi (${s.yazilan}/${s.toplam} blok).` : "Kaydedildi.");
 }
 
 // Rapor panelindeki blok secme listesini (dropdown) doldurur.
@@ -1284,6 +1435,8 @@ function gcSvg(doc) {
     const b = blokById(doc, id);
     return { id, poly: vektorPolyline(b.komut || []).map(p => T(p[0], p[1])) };
   });
+  svg._T = T;
+  svg._Tters = tersDonusum(T);              // tuval -> veri (baslangic tasima)
   const defs = ekle(svg, "defs", {});
   defs.innerHTML = `<marker id="ok" markerWidth="7" markerHeight="7" refX="5" refY="3"
     orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="${st.ok}"/></marker>
@@ -1366,15 +1519,26 @@ function gcSvg(doc) {
     svg.removeEventListener("click", svg._gcSecHandler); svg._gcSecHandler = null; }
   const tuvalTik = ev => {
     if (svg._suruklendi) return;          // kaydirma (pan) idi, secme
+    // BASLANGIC NOKTASI modu: tiklama bir NOKTA belirtir (blok secimi degil)
+    if (doc.gc.bas && doc.gc.bas.aktif && doc.gc.capa != null) {
+      const xy = ekranToTuval(svg, ev.clientX, ev.clientY);
+      gcBaslangicTasi(doc, doc.gc.capa, xy);
+      return;
+    }
     const id = gcSecimAdayi(svg, ev.clientX, ev.clientY);
     if (id != null) gcOnizTik(doc, id, ev);
-    else if (doc.gc.rapor && doc.gc.rapor.aktif)
+    else if ((doc.gc.rapor && doc.gc.rapor.aktif) ||
+             (doc.gc.atama && doc.gc.atama.aktif))
       bildir("Tiklama bir bloga denk gelmedi — konturun uzerine ya da "
            + "numarasina tiklayin.", true);
   };
   svg._gcSecHandler = tuvalTik;
   svg.addEventListener("click", tuvalTik);
-  svg.style.cursor = (doc.gc.rapor && doc.gc.rapor.siraMod) ? "crosshair" : "pointer";
+  const nisan = (doc.gc.rapor && doc.gc.rapor.siraMod)
+    || (doc.gc.atama && doc.gc.atama.aktif)
+    || (doc.gc.bas && doc.gc.bas.aktif && doc.gc.capa != null);
+  svg.style.cursor = nisan ? "crosshair" : "pointer";
+  gcAtamaDurum(doc);
   zoomEtkinlestir(svg);
 }
 
@@ -1398,10 +1562,70 @@ function gcSecimAdayi(svg, clientX, clientY) {
   return ic ? ic.id : null;
 }
 
+// Dosyadaki ORIJINAL sirayi geri getirir (siralama algoritmasi calismaz).
+function gcOrijinalSira(doc) {
+  const asil = doc.veri.orijinal_sira || doc.gc.orijinal;
+  gcAdimEkle(doc, asil.slice(), "orijinal");
+  bildir("Dosyadaki orijinal sira geri getirildi (algoritma calistirilmadi).");
+}
+
+// "Sira ata" modu durum yazisi + imlec
+function gcAtamaDurum(doc) {
+  const a = doc.gc.atama, b = doc.gc.bas;
+  const ad = $("g_atama_durum");
+  if (ad) ad.textContent = a.aktif
+    ? `siradaki numara: ${a.sonraki} — bloga tikla` : "";
+  const bd = $("g_bas_durum");
+  if (bd) bd.textContent = b && b.aktif
+    ? (doc.gc.capa != null
+        ? `blok ${doc.gc.sira.indexOf(doc.gc.capa) + 1} secili — kontura tikla`
+        : "once bir blok sec")
+    : "";
+}
+
+// Tiklanan bloga siradaki numarayi atar; blok o pozisyona TASINIR.
+function gcSiraAta(doc, id) {
+  const a = doc.gc.atama;
+  const n = doc.gc.sira.length;
+  const hedef = Math.max(1, Math.min(n, a.sonraki)) - 1;   // 0-tabanli
+  const k = doc.gc.sira.indexOf(id);
+  if (k < 0) return;
+  if (k !== hedef) {
+    const s = doc.gc.sira.slice();
+    const [b] = s.splice(k, 1);
+    s.splice(hedef, 0, b);
+    gcAdimEkle(doc, s, `sira ${hedef + 1}`);
+  }
+  bildir(`Blok ${hedef + 1}. siraya alindi.`);
+  a.sonraki = Math.min(n, hedef + 2);            // bir sonraki numara
+  $("g_atama_bas").value = a.sonraki;
+  gcAtamaDurum(doc);
+}
+
+// Secili blogun kesime BASLAMA noktasini tiklanan kontur noktasina tasir.
+async function gcBaslangicTasi(doc, id, tuvalXY) {
+  const svg = $("svgGc");
+  const kayit = (svg._gcBloklar || []).find(b => b.id === id);
+  if (!kayit || !svg._Tters) { bildir("Kontur bulunamadi.", true); return; }
+  const [dx, dy] = svg._Tters(tuvalXY[0], tuvalXY[1]);     // veri koordinati
+  const r = await api("/api/gcode/baslangic", { yol: doc.yol, id, nokta: [dx, dy] });
+  if (r.hata) { bildir(r.hata, true); return; }
+  if (!r.degisti) { bildir(r.bilgi || "Baslangic degismedi."); return; }
+  // Blok ozetini tazele (kontur/baslangic degisti)
+  const i = doc.gc.bloklar.findIndex(b => b.id === id);
+  if (i >= 0 && r.blok) doc.gc.bloklar[i] = r.blok;
+  doc.gc.tablar = null;
+  gcCiz(doc, true);
+  bildir(`Blok ${doc.gc.sira.indexOf(id) + 1} baslangici `
+       + `(${r.baslangic[0].toFixed(1)}, ${r.baslangic[1].toFixed(1)})`
+       + (r.yeni_node ? " — kenar uzerinde yeni nokta" : "") + ".");
+}
+
 // Onizlemede bir bloga tiklandi. Hata-bildir modunda tikla = hatali isaretle;
 // "dogru sirayi isaretle" acikken tikla = siradaki numarayi ata.
 function gcOnizTik(doc, id, e) {
   const R = doc.gc.rapor;
+  if (doc.gc.atama && doc.gc.atama.aktif) { gcSiraAta(doc, id); return; }
   if (R && R.aktif && R.siraMod) { gcDogruSiraAta(doc, id); return; }
   const poz = doc.gc.sira.indexOf(id);
   if (poz < 0) return;
@@ -1557,6 +1781,13 @@ function tumBbox(liste){ let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
 function fitDonusum(b, W, H, pad){ const w=Math.max(b[2]-b[0],1e-6),h=Math.max(b[3]-b[1],1e-6);
   const s=Math.min((W-2*pad)/w,(H-2*pad)/h); const ox=(W-s*w)/2,oy=(H-s*h)/2;
   return (x,y)=>[ox+(x-b[0])*s, H-(oy+(y-b[1])*s)]; }
+// fitDonusum'un TERSI: tuval pikselinden veri koordinatina. Iki referans
+// noktasindan olcek/ofset cikarilir; donusum affine oldugundan bu yeterlidir.
+function tersDonusum(T){
+  const [x0,y0] = T(0,0), [x1,y1] = T(1,1);
+  const sx = (x1-x0) || 1e-9, sy = (y1-y0) || 1e-9;
+  return (px,py)=>[ (px-x0)/sx, (py-y0)/sy ];
+}
 // Ekran (client) koordinatini tuvalin BAZ piksel uzayina (0..W,0..H) cevirir.
 // viewBox ile zoom/pan yapildigindan bu donusum olmadan olcum zoom'da kayar.
 function ekranToTuval(svg, clientX, clientY){
