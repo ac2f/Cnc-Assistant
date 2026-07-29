@@ -74,7 +74,12 @@ def _gcode_yukle(yol):
     prog = GC.GCodeProgram(yol)
     orijinal = list(prog.bloklar)
     id_map = {id(b): i for i, b in enumerate(orijinal)}
-    _DURUM[yol] = {"prog": prog, "orijinal": orijinal, "id_map": id_map}
+    # bas_degisiklik: kullanicinin tasidigi lead-in noktalari {blok_id:
+    # {"once":[x,y], "sonra":[x,y]}} -- hata raporunda "final duzenlemeler"
+    # bolumu icin saklanir.
+    _DURUM[yol] = {"prog": prog, "orijinal": orijinal, "id_map": id_map,
+                   "algoritma_sira": None, "algoritma_modu": None,
+                   "bas_degisiklik": {}}
     return prog, orijinal, id_map
 
 
@@ -290,8 +295,22 @@ def api_dxf_onizle(veri):
                            float(veri.get("alan_orani", 0.10)),
                            float(veri.get("boyut_orani", 0.50)))
     _DXF_DOC[yol] = sonuc["doc"]
+    vb0 = sonuc.get("vektor_butunluk") or {}
     _DXF_ONIZLE[yol] = {"oncesi": sonuc["oncesi"], "sonrasi": sonuc["sonrasi"],
-                        "riskli": sonuc["riskli_handlelar"]}
+                        "riskli": sonuc["riskli_handlelar"],
+                        # Hata raporunda "algoritma sonucu" bolumu icin
+                        "algoritma": {
+                            "destek_yonu": veri.get("destek_yonu", "sag-ust"),
+                            "node_temizle": veri.get("node_temizle", True),
+                            "node_tol": float(veri.get("node_tol", 1e-6)),
+                            "kaydirilan": sonuc["kaydirilan"],
+                            "silinen_node": sonuc["silinen_node"],
+                            "cember": sonuc["cember"],
+                            "cevre": sonuc["cevre"],
+                            "butunluk_ok": bool(vb0.get("ok", True)),
+                            "sapan_handlelar": [s["handle"] for s in
+                                                vb0.get("sapan", [])],
+                        }}
     riskli_kutu = [{"merkez": m, "w": w, "h": h}
                    for _, _, m, w, h in sonuc["riskli"]]
     vb = sonuc.get("vektor_butunluk") or {"ok": True, "kontrol": 0, "sapan": []}
@@ -356,15 +375,19 @@ def api_dxf_rapor(veri):
     o = _DXF_ONIZLE.get(yol)
     if o is None:
         s = D.optimize_doc(yol, _dxf_opts(veri))
-        o = {"sonrasi": s["sonrasi"]}
+        o = {"oncesi": s["oncesi"], "sonrasi": s["sonrasi"]}
     birim = None
     try:
         birim = D.ezdxf.readfile(yol).header.get("$INSUNITS")
     except Exception:
         pass
     varliklar = [_varlik_json(v) for v in o["sonrasi"]]
+    # ORIJINAL (algoritma oncesi) hal de rapora girer: boylece
+    # orijinal -> algoritma -> kullanicinin dogrusu zinciri gorunur.
+    oncesi = [_varlik_json(v) for v in (o.get("oncesi") or [])]
     rp = RAPOR.dxf_rapor(os.path.basename(yol), birim, varliklar,
-                         secimler, veri.get("genel_not", ""))
+                         secimler, veri.get("genel_not", ""),
+                         oncesi=oncesi, algoritma=o.get("algoritma"))
     if not rp["ogeler"]:
         # Secilen handle'lar onizlemedekilerle eslesmiyor (orn. arada dosya
         # yeniden islendi). Bos dosya yazip "hazir" demek yerine acikca soyle.
@@ -390,8 +413,34 @@ def api_gcode_rapor(veri):
         return {"hata": "Once dosyayi yukleyin."}
     d = _DURUM[yol]
     ozet = _ozet_bloklar(d["orijinal"])
+    n = len(d["orijinal"])
+
+    # UC ASAMA: dosyadaki orijinal sira, algoritmanin onerdigi sira ve
+    # kullanicinin elle duzenledikten sonraki FINAL sirasi.
+    orijinal_sira = list(range(n))
+    algoritma_sira = d.get("algoritma_sira") or orijinal_sira
+    final_sira = veri.get("final_sira") or veri.get("sira") or algoritma_sira
+    final_sira = [i for i in final_sira if 0 <= i < n]
+
+    def _bosta(sira):
+        return round(GC.toplam_bosta_yol([d["orijinal"][i] for i in sira]), 3)
+
+    siralama = RAPOR.gcode_siralama_ozeti(
+        orijinal_sira, algoritma_sira, final_sira,
+        mod=d.get("algoritma_modu"),
+        bosta={"orijinal": _bosta(orijinal_sira),
+               "algoritma": _bosta(algoritma_sira),
+               "final": _bosta(final_sira)})
+    duzenlemeler = RAPOR.gcode_duzenlemeler(
+        algoritma_sira, final_sira, d.get("bas_degisiklik"))
+    adimlar = veri.get("adimlar")
+    if adimlar:
+        siralama["duzenleme_adimlari"] = list(adimlar)
+
     rp = RAPOR.gcode_rapor(os.path.basename(yol), d["prog"].birim, ozet,
-                           secimler, veri.get("genel_not", ""))
+                           secimler, veri.get("genel_not", ""),
+                           siralama=siralama, duzenlemeler=duzenlemeler,
+                           bas_degisiklik=d.get("bas_degisiklik"))
     if not rp["ogeler"]:
         return {"hata": "Secilen bloklar dosyada bulunamadi; dosyayi yeniden "
                         "yukleyip secimi tazeleyin."}
@@ -401,6 +450,8 @@ def api_gcode_rapor(veri):
     _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
             "atlanan": len(secimler) - len(rp["ogeler"]),
+            "degisen": siralama["tasinan_blok"],
+            "bas_tasima": len(d.get("bas_degisiklik") or {}),
             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
 
 
@@ -421,6 +472,9 @@ def api_gcode_yukle(veri):
     otomatik = bool(veri.get("otomatik", True))
     orijinal_sira = list(range(len(orijinal)))
     onerilen = _sirala_idler(yol, "sol-alt") if otomatik else orijinal_sira
+    # Hata raporunda "algoritma sonucu" olarak bildirilebilmesi icin sakla.
+    _DURUM[yol]["algoritma_sira"] = list(onerilen)
+    _DURUM[yol]["algoritma_modu"] = "sol-alt" if otomatik else None
     return {"guvenli": True, "uyarilar": prog.uyarilar,
             "sabit_son": prog.sabit_son is not None,
             "birim": prog.birim,
@@ -459,7 +513,12 @@ def api_gcode_sirala(veri):
     yol = veri["yol"]
     if yol not in _DURUM:
         return {"hata": "Once dosyayi yukleyin."}
-    return {"sira": _sirala_idler(yol, veri.get("mod", "sol-alt"))}
+    mod = veri.get("mod", "sol-alt")
+    sira = _sirala_idler(yol, mod)
+    # En son calistirilan algoritma sonucu raporda "algoritma sonucu" olur.
+    _DURUM[yol]["algoritma_sira"] = list(sira)
+    _DURUM[yol]["algoritma_modu"] = mod
+    return {"sira": sira}
 
 
 def api_gcode_dogrula(veri):
@@ -557,6 +616,10 @@ def api_gcode_baslangic(veri):
     d["orijinal"][i] = yeni
     d["id_map"][id(yeni)] = i
     d["id_map"].pop(id(eski), None)
+    # Hata raporunda "final duzenleme" olarak bildirilebilmesi icin ILK
+    # baslangici koru (ayni blok defalarca tasinsa da orijinal kaybolmasin).
+    kayit = d["bas_degisiklik"].setdefault(i, {"once": bilgi["eski_baslangic"]})
+    kayit["sonra"] = bilgi["baslangic"]
     return {"degisti": True, "id": i,
             "baslangic": bilgi["baslangic"],
             "yeni_node": bilgi["yeni_node"],

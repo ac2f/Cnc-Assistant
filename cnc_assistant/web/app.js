@@ -653,7 +653,9 @@ async function dxfRaporIndir(doc) {
     dosya_adi: ad || undefined });
   if (r.hata) { yaz(r.hata, true); return; }
   const atlandi = r.atlanan ? ` <span class="uyari">(${r.atlanan} secim eslesmedi)</span>` : "";
-  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`;
+  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`
+    + `<br><span class="kk2">Rapor icerigi: orijinal baslangic + algoritma sonucu `
+    + `+ senin isaretledigin dogru nokta</span>`;
   bildir(`Hata raporu indiriliyor (${r.oge_sayisi} oge).`);
   indir(r.indir);
 }
@@ -1270,10 +1272,20 @@ async function gcRaporIndir(doc) {
   const ad = ($("g_rapor_ad") && $("g_rapor_ad").value.trim()) || "";
   if (dr) dr.innerHTML = `<span class="yukleniyor"></span> Rapor uretiliyor…`;
   const r = await api("/api/gcode/rapor", { yol: doc.yol, secimler, genel_not: gnot,
+    // Raporda ORIJINAL / ALGORITMA / FINAL zinciri kurulabilsin diye
+    // kullanicinin son duzenledigi sirayi ve duzenleme adimlarini da yolla.
+    final_sira: doc.gc.sira,
+    adimlar: (doc.gc.tarih || []).map(t => t.etiket),
     dosya_adi: ad || undefined });
   if (r.hata) { yaz(r.hata, true); return; }
   const atlandi = r.atlanan ? ` <span class="uyari">(${r.atlanan} secim eslesmedi)</span>` : "";
-  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`;
+  // Raporun icinde algoritma sonucu + kullanicinin final duzenlemeleri de var.
+  const ek = [];
+  if (r.degisen) ek.push(`${r.degisen} blok algoritmadan farkli siralanmis`);
+  if (r.bas_tasima) ek.push(`${r.bas_tasima} baslangic tasinmis`);
+  if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`
+    + `<br><span class="kk2">Rapor icerigi: orijinal sira + algoritma sonucu + final duzenlemeler`
+    + (ek.length ? ` — ${ek.join(", ")}` : "") + `</span>`;
   bildir(`Hata raporu indiriliyor (${r.oge_sayisi} oge).`);
   indir(r.indir);
 }
