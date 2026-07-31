@@ -310,3 +310,57 @@ if __name__ == "__main__":
                 print(f"FAIL {ad}")
                 traceback.print_exc()
     sys.exit(1 if fails else 0)
+
+
+def test_kusatilan_parca_once_kesilir_gercek_vaka():
+    """GERCEK VAKA (001d40-kesim0z15): buyuk 'C' formundaki parcanin agzindaki
+    fire alaninda duran kucuk daire, buyuk parcadan ONCE kesilmeli.
+
+    Kucuk parca buyugun BBOX'i icinde ama POLIGONU icinde degil (agiz/fire
+    bolgesinde). Eski kural yalnizca poligon-icerme bakiyordu, bu yuzden
+    buyugu once kesiyordu; kullanici ayni duzeltmeyi ayni dosyada UC KEZ
+    elle yapmisti."""
+    from cnc_assistant.gcode import (sirala, blok_bbox, destek_simulasyonu,
+                                     containment_derinlik)
+    # 'C' formu: bbox 0..300 x 0..240, agzi sagda; govdesi kucugu icermez
+    C = ["G0 X0 Y0", "G1 Z-1",
+         "G1 X300 Y0", "G1 X300 Y60", "G1 X80 Y60", "G1 X80 Y180",
+         "G1 X300 Y180", "G1 X300 Y240", "G1 X0 Y240", "G1 X0 Y0", "G0 Z5"]
+    kucuk = _kare_blok(180, 100, 240, 160)          # C'nin agzindaki fire alani
+
+    der = containment_derinlik([C, kucuk])
+    assert der[1] == 1 and der[0] == 0              # kucuk KUSATILMIS sayilir
+
+    srt = sirala([C, kucuk], "sol-alt")
+    assert blok_bbox(srt[0]) == (180.0, 100.0, 240.0, 160.0)   # kucuk once
+
+    # ters sira -> KRITIK "ic" ihlali bildirilmeli
+    krit = [r for r in destek_simulasyonu([C, kucuk]) if r["kritik"]]
+    assert krit and krit[0]["yon"] == "ic"
+    assert krit[0]["parca"] == 2 and krit[0]["engel"] == 1
+
+
+def test_kusatma_alan_orani_benzer_boyutlari_eler():
+    """KUSATMA yalnizca BELIRGIN kucuk parcalar icin gecerli olmali.
+    Kapsayanin ayak izinde kalsa bile, alani ona yakin bir parca kusatilmis
+    sayilmaz (aksi halde sik yerlesimlerde her cift zincire doner)."""
+    from cnc_assistant.gcode import _ic_ice_mi, KUSATMA_ALAN_ORANI
+    dis_bbox = (0.0, 0.0, 100.0, 100.0)
+    # Kapsayanin govdesi ICI BOS gibi davransin: poligonu sol seritte kalsin,
+    # boylece merkez testi (gercek icerme) TUTMAZ, yalnizca kusatma kalir.
+    dis_poly = [(0.0, 0.0), (10.0, 0.0), (10.0, 100.0), (0.0, 100.0)]
+    dis_poly = dis_poly + [(0.0, 0.0)]
+    tol = 1e-3
+
+    # a) belirgin kucuk (alan orani %4) -> KUSATILMIS
+    kucuk_bbox = (40.0, 40.0, 60.0, 60.0)
+    kucuk_poly = [(40.0, 40.0), (60.0, 40.0), (60.0, 60.0), (40.0, 60.0)]
+    assert _ic_ice_mi(kucuk_bbox, kucuk_poly, dis_bbox, dis_poly, tol) is True
+
+    # b) benzer boyutlu (alan orani %81 > esik) -> KUSATILMIS SAYILMAZ
+    benzer_bbox = (5.0, 5.0, 95.0, 95.0)
+    benzer_poly = [(5.0, 5.0), (95.0, 5.0), (95.0, 95.0), (5.0, 95.0)]
+    assert _ic_ice_mi(benzer_bbox, benzer_poly, dis_bbox, dis_poly, tol) is False
+
+    # esigin kendisi makul bir aralikta olmali
+    assert 0.0 < KUSATMA_ALAN_ORANI < 1.0

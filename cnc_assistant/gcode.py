@@ -270,14 +270,31 @@ def _bbox_alani(b):
     return (b[2] - b[0]) * (b[3] - b[1])
 
 
-def _ic_ice_mi(i_bbox, i_poly, d_bbox, d_poly, tol):
-    """i blogu, d blogunun ICINDE mi? (i=ic aday, d=dis aday)
+# KUSATMA esigi: ic parcanin bbox alani, dis parcanin bbox alaninin bu
+# oranindan KUCUKSE parca "kusatilmis" sayilir ve dis parcadan ONCE kesilir.
+# (Ayni olcudeki komsu/cakisan parcalar birbirini kusatmis sayilmaz.)
+KUSATMA_ALAN_ORANI = 0.5
 
-    Kosullar (hepsi saglanmali):
+
+def _ic_ice_mi(i_bbox, i_poly, d_bbox, d_poly, tol):
+    """i blogu, d blogundan ONCE kesilmeli mi? (i=ic aday, d=dis aday)
+
+    IKI durumu birden kapsar:
+
+    1) GERCEK ICERME - i, d'nin govdesinin icinde (bir 'O' harfinin
+       gobegindeki ada gibi). Agirlik merkezi testi ile bulunur.
+
+    2) KUSATMA - i, d'nin govdesinin icinde DEGIL ama tamamen onun AYAK IZI
+       (bbox) icinde kaliyor ve d belirgin sekilde buyuk. Tipik ornek: 'C'
+       ya da 'U' formundaki buyuk bir parcanin agzindaki fire alaninda duran
+       kucuk bir parca. Buyuk parca once kesilirse o fire alani serbest
+       kalir; icindeki kucuk parca desteksiz kalip oynar. Bu yuzden kucuk
+       parca DAIMA once kesilmelidir.
+
+    Kosullar (her iki durumda da):
       * i'nin bbox'i d'nin bbox'i icinde (tolerans ile),
       * d'nin alani i'den belirgin sekilde buyuk (esit/multi-paso kendini
-        icermesin diye),
-      * i'nin agirlik merkezi d'nin poligonu icinde (ray-casting).
+        icermesin diye).
     """
     if len(d_poly) < 3:
         return False
@@ -288,8 +305,11 @@ def _ic_ice_mi(i_bbox, i_poly, d_bbox, d_poly, tol):
     # alan: dis belirgin buyuk olmali (ayni kontur multi-paso -> icerme yok)
     if _bbox_alani(d_bbox) <= _bbox_alani(i_bbox) + max(tol * tol, 1e-9):
         return False
-    # merkez testi
-    return _nokta_poligon_icinde(_poligon_merkez(i_poly), d_poly)
+    # 1) gercek icerme
+    if _nokta_poligon_icinde(_poligon_merkez(i_poly), d_poly):
+        return True
+    # 2) kusatma (d'nin ayak izi icinde kalan belirgin kucuk parca)
+    return _bbox_alani(i_bbox) <= KUSATMA_ALAN_ORANI * _bbox_alani(d_bbox)
 
 
 def containment_derinlik(bloklar):
@@ -677,6 +697,18 @@ def destek_simulasyonu(bloklar, tol_orani=0.02):
         return []
     der = containment_derinlik(bloklar)
     kutular = [blok_bbox(b) for b in bloklar]
+    # (0) ICERME / KUSATMA: kapsayan parca ONCE kesilmisse, onun ayak izinde
+    # kalan parca desteksiz kalir. Bu iliski containment ile KESIN bilinir;
+    # asagidaki kok-duzeyi ortusme sezgisine birakilmaz (kapsanan parca zaten
+    # kok degildir, oraya hic girmez).
+    on_ihlaller = []
+    for i, e in enumerate(_direkt_ebeveyn(bloklar)):
+        if e is not None and e < i:            # kapsayan DAHA ONCE kesiliyor
+            on_ihlaller.append({
+                "parca": i + 1, "engel": e + 1,
+                "yon": "ic", "kritik": True,
+                "aciklama": f"#{e + 1} (kapsayan) once kesildigi icin onun "
+                            f"ayak izindeki #{i + 1} desteksiz kaliyor"})
     olcek = 0.0
     _tumx = [v for kk in kutular for v in (kk[0], kk[2])]
     if _tumx:
@@ -688,7 +720,7 @@ def destek_simulasyonu(bloklar, tol_orani=0.02):
            and (kutular[i][2] - kutular[i][0] > dejen
                 or kutular[i][3] - kutular[i][1] > dejen)]
     if len(kok) <= 1:
-        return []
+        return on_ihlaller
     bbox = [kutular[i] for i in kok]
     mz = [((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0) for b in bbox]
     tx = [v for b in bbox for v in (b[0], b[2])]
@@ -703,7 +735,7 @@ def destek_simulasyonu(bloklar, tol_orani=0.02):
 
     alan = [max((b[2] - b[0]) * (b[3] - b[1]), 0.0) for b in bbox]
 
-    ihlaller = []
+    ihlaller = list(on_ihlaller)
     for a in range(len(kok)):            # Y: su an kesilen dis kontur
         for b in range(a):               # X: daha once kesilmis dis kontur (engel)
             yov = min(bbox[a][3], bbox[b][3]) - max(bbox[a][1], bbox[b][1])
