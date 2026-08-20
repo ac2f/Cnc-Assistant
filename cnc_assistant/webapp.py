@@ -45,6 +45,7 @@ from . import project as P
 _YUKLEME_DIZIN = os.path.join(tempfile.gettempdir(), "cnc_assistant_yukleme")
 _DXF_ONIZLE = {}          # yol -> {oncesi, sonrasi, riskli} (PDF/yeniden kullanim)
 _INDIRILEBILIR = set()    # /indir ile sunulabilecek (bizim urettigimiz) dosyalar
+_DXF_DUZELTME = {}        # yol -> {handle: {once, sonra, yeni_node}} elle baslangic
 
 WEB_DIZIN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
@@ -295,8 +296,15 @@ def api_dxf_onizle(veri):
                            float(veri.get("alan_orani", 0.10)),
                            float(veri.get("boyut_orani", 0.50)))
     _DXF_DOC[yol] = sonuc["doc"]
+    # Dosya yeniden islendi: onceki elle baslangic duzeltmeleri artik yeni
+    # dokumana ait degil, sifirlanir.
+    _DXF_DUZELTME.pop(yol, None)
     vb0 = sonuc.get("vektor_butunluk") or {}
     _DXF_ONIZLE[yol] = {"oncesi": sonuc["oncesi"], "sonrasi": sonuc["sonrasi"],
+                        # ALGORITMANIN cikti anlik goruntusu: elle baslangic
+                        # duzeltmeleri bunu ASLA degistirmez, boylece hata
+                        # raporu algoritmanin gercek sonucunu tasir.
+                        "algoritma_sonrasi": list(sonuc["sonrasi"]),
                         "riskli": sonuc["riskli_handlelar"],
                         # Hata raporunda "algoritma sonucu" bolumu icin
                         "algoritma": {
@@ -356,10 +364,61 @@ def api_dxf_kaydet(veri):
     if yol not in _DXF_DOC:
         return {"hata": "Once onizleyin."}
     cikti = _cikti_yolu(yol, veri, "_optimized", ".dxf")
-    _DXF_DOC[yol].saveas(cikti)
+    _DXF_DOC[yol].saveas(cikti)          # elle duzeltmeler DAHIL
     _INDIRILEBILIR.add(os.path.abspath(cikti))
     return {"cikti": cikti,
+            "duzeltme_sayisi": len(_DXF_DUZELTME.get(yol) or {}),
             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+
+def _dxf_oniz_tazele(yol):
+    """Bellekteki dokumandan onizleme onbellegini yeniler (baslangic elle
+    tasindiktan sonra 'sonrasi' listesi guncel kalsin diye)."""
+    o = _DXF_ONIZLE.get(yol)
+    if o is None or yol not in _DXF_DOC:
+        return None
+    o["sonrasi"] = D.varlik_yollari(_DXF_DOC[yol])
+    return o
+
+
+def api_dxf_baslangic(veri):
+    """Bir vektorun kesime BASLADIGI noktayi kontur uzerinde baska bir yere
+    tasir ve BELLEKTEKI dokumana uygular. Boylece hem 'Kaydet' hem de hata
+    raporu ciktisi duzeltilmis halde iner.
+
+    veri: {yol, handle, nokta: [x, y], bol: bool}"""
+    yol = veri["yol"]
+    if yol not in _DXF_DOC:
+        return {"hata": "Once onizleyin."}
+    handle = str(veri.get("handle") or "")
+    nokta = veri.get("nokta")
+    if not handle:
+        return {"hata": "Vektor secilmedi."}
+    if not nokta or len(nokta) < 2:
+        return {"hata": "Hedef nokta verilmedi."}
+
+    r = D.varlik_baslangic_tasi(_DXF_DOC[yol], handle,
+                                (float(nokta[0]), float(nokta[1])),
+                                bol=veri.get("bol", True))
+    if r.get("hata"):
+        return {"hata": r["hata"]}
+
+    d = _DXF_DUZELTME.setdefault(yol, {})
+    if r.get("degisti"):
+        kayit = d.setdefault(handle, {"once": r["eski_baslangic"]})
+        kayit["sonra"] = r["baslangic"]
+        kayit["yeni_node"] = bool(r.get("yeni_node"))
+    o = _dxf_oniz_tazele(yol)
+    yeni = None
+    if o:
+        for v in o["sonrasi"]:
+            if v["handle"] == handle:
+                yeni = _varlik_json(v)
+                break
+    return {"degisti": bool(r.get("degisti")), "handle": handle,
+            "baslangic": r["baslangic"], "yeni_node": bool(r.get("yeni_node")),
+            "eski_baslangic": r.get("eski_baslangic"),
+            "duzeltme_sayisi": len(d), "varlik": yeni}
 
 
 def api_dxf_rapor(veri):
@@ -372,19 +431,48 @@ def api_dxf_rapor(veri):
         return {"hata": "Hata raporu icin once en az bir vektor secin."}
     if yol not in _DXF_ONIZLE and not os.path.isfile(yol):
         return {"hata": "Once onizleyin."}
+
+    # DIKKAT: rapor ALGORITMANIN ciktisini tasimali. Duzeltmeleri uygulamadan
+    # ONCE anlik goruntuyu al; aksi halde 'algoritma_baslangic' kullanicinin
+    # duzelttigi deger olur ve rapor kendi kendini gecersiz kilar.
+    _o0 = _DXF_ONIZLE.get(yol)
+    alg_sonrasi = list(_o0.get("algoritma_sonrasi") or _o0["sonrasi"]) if _o0 else None
+    alg_oncesi = list(_o0.get("oncesi") or []) if _o0 else None
+
+    # Kullanicinin isaretledigi DOGRU baslangiclari BELLEKTEKI dokumana da
+    # uygula; boylece rapor ile birlikte DUZELTILMIS DXF de inebilsin.
+    uygulanan = 0
+    if yol in _DXF_DOC:
+        for sec in secimler:
+            hp = str(sec.get("handle") or "")
+            nokta = sec.get("dogru_baslangic")
+            if not hp or not nokta:
+                continue
+            r = D.varlik_baslangic_tasi(_DXF_DOC[yol], hp,
+                                        (float(nokta[0]), float(nokta[1])))
+            if r.get("degisti"):
+                uygulanan += 1
+                kayit = _DXF_DUZELTME.setdefault(yol, {}).setdefault(
+                    hp, {"once": r["eski_baslangic"]})
+                kayit["sonra"] = r["baslangic"]
+                kayit["yeni_node"] = bool(r.get("yeni_node"))
+        if uygulanan:
+            _dxf_oniz_tazele(yol)
+
     o = _DXF_ONIZLE.get(yol)
     if o is None:
         s = D.optimize_doc(yol, _dxf_opts(veri))
         o = {"oncesi": s["oncesi"], "sonrasi": s["sonrasi"]}
+        alg_sonrasi, alg_oncesi = s["sonrasi"], s["oncesi"]
     birim = None
     try:
-        birim = D.ezdxf.readfile(yol).header.get("$INSUNITS")
+        birim = D.birim_adi(D.ezdxf.readfile(yol).header.get("$INSUNITS"))
     except Exception:
         pass
-    varliklar = [_varlik_json(v) for v in o["sonrasi"]]
+    varliklar = [_varlik_json(v) for v in (alg_sonrasi or o["sonrasi"])]
     # ORIJINAL (algoritma oncesi) hal de rapora girer: boylece
     # orijinal -> algoritma -> kullanicinin dogrusu zinciri gorunur.
-    oncesi = [_varlik_json(v) for v in (o.get("oncesi") or [])]
+    oncesi = [_varlik_json(v) for v in (alg_oncesi or o.get("oncesi") or [])]
     rp = RAPOR.dxf_rapor(os.path.basename(yol), birim, varliklar,
                          secimler, veri.get("genel_not", ""),
                          oncesi=oncesi, algoritma=o.get("algoritma"))
@@ -397,9 +485,23 @@ def api_dxf_rapor(veri):
     with open(cikti, "w", encoding="utf-8") as f:
         json.dump(rp, f, ensure_ascii=False, indent=2)
     _INDIRILEBILIR.add(os.path.abspath(cikti))
-    return {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
-            "atlanan": len(secimler) - len(rp["ogeler"]),
-            "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+    sonuc = {"cikti": cikti, "oge_sayisi": len(rp["ogeler"]),
+             "atlanan": len(secimler) - len(rp["ogeler"]),
+             "uygulanan": uygulanan,
+             "indir": "/indir?yol=" + urllib.parse.quote(os.path.abspath(cikti))}
+
+    # Rapor ile BIRLIKTE duzeltilmis DXF: isaretlenen dogru baslangiclar
+    # uygulanmis halde.
+    if yol in _DXF_DOC and _DXF_DUZELTME.get(yol):
+        dxf_cikti = _cikti_yolu(yol, dict(veri, cikti=None, dosya_adi=None),
+                                "_duzeltilmis", ".dxf")
+        _DXF_DOC[yol].saveas(dxf_cikti)
+        _INDIRILEBILIR.add(os.path.abspath(dxf_cikti))
+        sonuc["dxf_cikti"] = dxf_cikti
+        sonuc["duzeltme_sayisi"] = len(_DXF_DUZELTME[yol])
+        sonuc["indir_dxf"] = ("/indir?yol="
+                              + urllib.parse.quote(os.path.abspath(dxf_cikti)))
+    return sonuc
 
 
 def api_gcode_rapor(veri):
@@ -846,6 +948,7 @@ API = {
     "/api/dxf/onizle": api_dxf_onizle,
     "/api/dxf/kaydet": api_dxf_kaydet,
     "/api/dxf/rapor": api_dxf_rapor,
+    "/api/dxf/baslangic": api_dxf_baslangic,
     "/api/gcode/rapor": api_gcode_rapor,
     "/api/dxf/pdf": api_dxf_pdf,
     "/api/dxf/onizleme": api_dxf_onizleme,

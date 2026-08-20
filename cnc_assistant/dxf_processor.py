@@ -64,6 +64,22 @@ def _ocs_yon_duzelt(entity, opts):
     return opts
 
 
+# DXF $INSUNITS kodu -> insan/makine okunur birim adi. (Ham kodu disari
+# vermek yaniltici oluyordu: rapora "birim": 4 diye dusuyordu.)
+INSUNITS = {0: None, 1: "inch", 2: "feet", 4: "mm", 5: "cm", 6: "m",
+            8: "microinch", 9: "mil", 10: "yard", 11: "angstrom",
+            12: "nanometre", 13: "mikron", 14: "dm", 15: "dam",
+            16: "hm", 17: "gm", 18: "au", 19: "isik_yili", 20: "parsek"}
+
+
+def birim_adi(kod):
+    """$INSUNITS kodunu birim adina cevirir (bilinmiyorsa None)."""
+    try:
+        return INSUNITS.get(int(kod))
+    except (TypeError, ValueError):
+        return None
+
+
 def _segment_orani(a, b, p):
     """`p` noktasinin a->b segmenti uzerindeki parametresi (0..1). Lead-in
     node'u segmenti bolerken genislik/yukseklik interpolasyonu icin gerekir."""
@@ -126,6 +142,154 @@ def lwpolyline_optimize_et(pl, opts):
         pts = pts + [pts[0]]
     pl.set_points(pts, format=fmt)
     return True, silinen
+
+
+# ----------------------------------------------------------------------
+# ELLE BASLANGIC (LEAD-IN) TASIMA
+# ----------------------------------------------------------------------
+#
+# Kullanicinin isaretledigi noktaya gore kapali bir vektorun baslangicini
+# tasir. GEOMETRI DEGISMEZ: vertex listesi dondurulur (rotate); gerekiyorsa
+# DUZ bir segment tam hedefte ikiye bolunur. Yay (bulge) segmentleri ASLA
+# bolunmez -> hedef yaya denk gelirse en yakin MEVCUT vertex kullanilir.
+
+# Hedefe bu kadar yakin (bbox kosegeninin orani) bir vertex varsa yeni node
+# acmak yerine o vertex kullanilir.
+ELLE_KABUL_TOL = 0.02
+
+
+def _en_yakin_konum(pts, hedef, bol=True, kabul_orani=ELLE_KABUL_TOL):
+    """Hedefe en yakin kontur konumunu bulur.
+
+    Doner: (bas_idx, yeni_pts, yeni_node)
+      bas_idx  : dondurmenin baslayacagi indeks
+      yeni_pts : (gerekiyorsa segment bolunmus) nokta listesi
+      yeni_node: kontur uzerinde yeni bir node acildi mi
+    """
+    n = len(pts)
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    diag = math.hypot(max(xs) - min(xs), max(ys) - min(ys)) or 1.0
+    kabul = diag * kabul_orani
+
+    k = min(range(n), key=lambda i: (pts[i][0] - hedef[0]) ** 2
+            + (pts[i][1] - hedef[1]) ** 2)
+    k_uz = math.hypot(pts[k][0] - hedef[0], pts[k][1] - hedef[1])
+
+    en_iyi = None
+    if bol:
+        for i in range(n):
+            a, b = pts[i], pts[(i + 1) % n]
+            if abs(a[4]) > 1e-9:                  # yay segmenti: bolunmez
+                continue
+            t = _segment_orani(a, b, hedef)
+            if not (1e-9 < t < 1 - 1e-9):
+                continue
+            cx = a[0] + t * (b[0] - a[0])
+            cy = a[1] + t * (b[1] - a[1])
+            d = math.hypot(cx - hedef[0], cy - hedef[1])
+            if en_iyi is None or d < en_iyi[3]:
+                en_iyi = (i, (cx, cy), t, d)
+
+    if en_iyi is not None and en_iyi[3] < k_uz and k_uz > kabul:
+        i, c, t, _d = en_iyi
+        a = pts[i]
+        wt = a[2] + t * (a[3] - a[2])             # genislik interpolasyonu
+        yeni = list(pts)
+        yeni[i] = (a[0], a[1], a[2], wt) + tuple(a[4:])
+        ek = (c[0], c[1], wt, a[3], 0.0) + tuple(a[5:])
+        yeni.insert(i + 1, ek)
+        return i + 1, yeni, True
+    return k, list(pts), False
+
+
+def lwpolyline_baslangic_tasi(pl, hedef, bol=True):
+    """Kapali LWPOLYLINE'in baslangicini hedefe en yakin kontur konumuna
+    tasir. Doner: {degisti, baslangic, yeni_node} veya {hata}."""
+    fmt = "xyseb"
+    pts = list(pl.get_points(fmt))
+    acik_kapali = False
+    if not pl.closed:
+        if len(pts) >= 3 and math.hypot(pts[0][0] - pts[-1][0],
+                                        pts[0][1] - pts[-1][1]) < 1e-9:
+            pts = pts[:-1]
+            acik_kapali = True
+        else:
+            return {"hata": "Kapali olmayan vektorun baslangici tasinamaz."}
+    if len(pts) < 3:
+        return {"hata": "Vektorde yeterli node yok."}
+
+    eski = [pts[0][0], pts[0][1]]
+    bas, pts, yeni_node = _en_yakin_konum(pts, hedef, bol)
+    if bas == 0 and not yeni_node:
+        return {"degisti": False, "baslangic": eski, "yeni_node": False,
+                "eski_baslangic": eski}
+    pts = pts[bas:] + pts[:bas]
+    if acik_kapali:
+        pts = pts + [pts[0]]
+    pl.set_points(pts, format=fmt)
+    return {"degisti": True, "baslangic": [pts[0][0], pts[0][1]],
+            "yeni_node": yeni_node, "eski_baslangic": eski}
+
+
+def polyline2d_baslangic_tasi(pl, hedef, bol=True):
+    """Kapali klasik 2D POLYLINE icin ayni islem (Z ve genislikler korunur)."""
+    vlist = list(pl.vertices)
+    if not pl.is_closed or len(vlist) < 3:
+        return {"hata": "Kapali olmayan vektorun baslangici tasinamaz."}
+
+    def vpt(v):
+        loc = v.dxf.location
+        return (loc.x, loc.y, v.dxf.get("start_width", 0.0),
+                v.dxf.get("end_width", 0.0), v.dxf.get("bulge", 0.0), loc.z)
+
+    pts = [vpt(v) for v in vlist]
+    eski = [pts[0][0], pts[0][1]]
+    bas, yeni_pts, yeni_node = _en_yakin_konum(pts, hedef, bol)
+    if bas == 0 and not yeni_node:
+        return {"degisti": False, "baslangic": eski, "yeni_node": False,
+                "eski_baslangic": eski}
+
+    if yeni_node:                                  # bolunen segmente vertex ekle
+        i = bas - 1
+        p = yeni_pts[bas]
+        kaynak = vlist[i]
+        yv = kaynak.copy()
+        yv.dxf.location = (p[0], p[1], p[5] if len(p) > 5 else 0.0)
+        yv.dxf.bulge = 0.0
+        yv.dxf.start_width, yv.dxf.end_width = p[2], p[3]
+        kaynak.dxf.end_width = p[2]
+        pl.doc.entitydb.add(yv)
+        yv.dxf.owner = kaynak.dxf.owner
+        pl.vertices.insert(bas, yv)
+        vlist = list(pl.vertices)
+
+    veriler = [(p[0], p[1], p[5] if len(p) > 5 else 0.0, p[4], p[2], p[3])
+               for p in yeni_pts]
+    veriler = veriler[bas:] + veriler[:bas]
+    for v, (x, y, z, bulge, sw, ew) in zip(vlist, veriler):
+        v.dxf.location = (x, y, z)
+        v.dxf.bulge = bulge
+        v.dxf.start_width, v.dxf.end_width = sw, ew
+    return {"degisti": True, "baslangic": [veriler[0][0], veriler[0][1]],
+            "yeni_node": yeni_node, "eski_baslangic": eski}
+
+
+def varlik_baslangic_tasi(doc, handle, hedef, bol=True):
+    """`handle` ile belirtilen kapali vektorun baslangicini tasir."""
+    e = None
+    for x in doc.modelspace():
+        if x.dxf.handle == handle:
+            e = x
+            break
+    if e is None:
+        return {"hata": f"Vektor bulunamadi: {handle}"}
+    t = e.dxftype()
+    if t == "LWPOLYLINE":
+        return lwpolyline_baslangic_tasi(e, hedef, bol)
+    if t == "POLYLINE":
+        return polyline2d_baslangic_tasi(e, hedef, bol)
+    return {"hata": f"{t} tipinde baslangic tasinamaz (parametrik varlik)."}
 
 
 # ----------------------------------------------------------------------

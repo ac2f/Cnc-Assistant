@@ -345,6 +345,16 @@ function dxfIcerik(doc) {
         <button class="dugme" id="d_ind_birlikte">Birlikte</button>
         <div style="flex:1"></div>
       </div>
+      <div class="arac" id="d_bas_kutu" style="margin-top:10px;align-items:center;gap:10px;flex-wrap:wrap;border-top:1px solid var(--kenar);padding-top:10px">
+        <label class="anahtar" title="Hata bildirmeden, dogrudan baslangic noktasi duzenle">
+          <input type="checkbox" id="d_bas_ac"><span class="kutu"></span>
+          <b>Baslangic duzenle</b></label>
+        <span class="kk2" style="flex:1;min-width:240px">SONRASI onizlemede vektore tikla, sonra imleci
+          istedigin yere getirip <b>S</b> (en yakin mevcut node) ya da <b>E</b> (kontur uzerinde yeni node).
+          Degisiklik DOSYAYA uygulanir; kaydettiginde duzeltilmis iner.</span>
+        <span class="birim-cip" id="d_bas_sayac" style="display:none"></span>
+        <button class="dugme hayalet kucuk" id="d_bas_geri" style="display:none">Duzeltmeleri geri al</button>
+      </div>
       <div class="arac" id="d_rapor_kutu" style="margin-top:10px;flex-direction:column;align-items:stretch;gap:8px;border-top:1px solid var(--kenar);padding-top:10px">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <label class="anahtar"><input type="checkbox" id="d_rapor_ac">
@@ -456,8 +466,24 @@ function dxfIcerik(doc) {
       const ad = $("d_kayit_ad") ? $("d_kayit_ad").value.trim() : "";
       const r = await api("/api/dxf/kaydet", { yol: doc.yol, dosya_adi: ad || undefined });
       $("d_durum").innerHTML = r.hata ? `<span class="uyari">${r.hata}</span>`
-        : `<span class="ok">Kaydedildi:</span> ${r.cikti}`;
+        : `<span class="ok">Kaydedildi:</span> ${r.cikti}`
+          + (r.duzeltme_sayisi ? ` <span class="kk2">(${r.duzeltme_sayisi} elle `
+             + `baslangic duzeltmesi uygulandi)</span>` : "");
     };
+    // ---- Baslangic duzenle modu (hata bildirmeden) ----
+    doc.bas = doc.bas || { aktif:false, aktifHandle:null, sayac:0 };
+    $("d_bas_ac").checked = doc.bas.aktif;
+    $("d_bas_ac").onchange = e => {
+      doc.bas.aktif = e.target.checked;
+      if (e.target.checked) {
+        bildir("Baslangic duzenle acik — vektore tikla, sonra S (en yakin node) "
+             + "ya da E (yeni node) tuslarina bas.");
+      }
+      dxfCiz(doc);
+    };
+    $("d_bas_geri").onclick = () => dxfBaslangicGeriAl(doc);
+    dxfBasSayacTazele(doc);
+
     // ---- Hata bildir (rapor) modu ----
     doc.rapor = doc.rapor || { aktif:false, secim:new Map(), aktifHandle:null, isaret:false };
     $("d_rapor_ac").onchange = e => {
@@ -536,12 +562,60 @@ function dxfRaporSec(doc, handle, zorlaEkle) {
   dxfCiz(doc); dxfRaporListe(doc);
 }
 
+// Baslangic duzenleme sayaci / geri al butonu
+function dxfBasSayacTazele(doc) {
+  const s = $("d_bas_sayac"), g = $("d_bas_geri");
+  const n = (doc.bas && doc.bas.sayac) || 0;
+  if (s) { s.style.display = n ? "inline-block" : "none";
+    s.textContent = `${n} baslangic duzeltildi — kayitta uygulanir`; }
+  if (g) g.style.display = n ? "inline-block" : "none";
+}
+
+// Secili vektorun baslangicini verilen noktaya tasir ve DOSYAYA uygular.
+async function dxfBaslangicUygula(doc, handle, nokta, yeniNode) {
+  const r = await api("/api/dxf/baslangic", { yol: doc.yol, handle,
+    nokta, bol: yeniNode !== false });
+  if (r.hata) { bildir(r.hata, true); return false; }
+  if (!r.degisti) { bildir("Baslangic zaten bu noktada."); return false; }
+  // onizleme verisini tazele (kontur dondu, baslangic degisti)
+  if (r.varlik) {
+    const i = (doc.veri.sonrasi || []).findIndex(x => x.handle === handle);
+    if (i >= 0) doc.veri.sonrasi[i] = r.varlik;
+  }
+  doc.bas = doc.bas || { aktif:true, aktifHandle:null, sayac:0 };
+  doc.bas.sayac = r.duzeltme_sayisi || 0;
+  dxfBasSayacTazele(doc);
+  bildir(`Baslangic tasindi: (${r.baslangic[0].toFixed(1)}, ${r.baslangic[1].toFixed(1)})`
+       + (r.yeni_node ? " — kontur uzerinde yeni node" : ""));
+  return true;
+}
+
+async function dxfBaslangicGeriAl(doc) {
+  // Dosyayi yeniden isle: elle duzeltmeler sunucuda sifirlanir.
+  doc.bas.sayac = 0; doc.bas.aktifHandle = null;
+  dxfBasSayacTazele(doc);
+  bildir("Duzeltmeler geri alindi, dosya yeniden isleniyor…");
+  await yukle(doc);
+}
+
 function dxfCiz(doc) {
   const v = doc.veri; if (v.hata) return;
+  doc.bas = doc.bas || { aktif:false, aktifHandle:null, sayac:0 };
   doc.rapor = doc.rapor || { aktif:false, secim:new Map(), aktifHandle:null, isaret:false };
   const R = doc.rapor;
   R.sapan = new Set(v.sapan_handlelar || []);
-  R.onSelect = h => dxfRaporSec(doc, h, false);
+  R.duzenle = !!doc.bas.aktif;          // baslangic duzenleme modu acik mi
+  R.onSelect = h => {
+    // Baslangic duzenleme modunda (rapor kapaliyken) tiklama = AKTIF vektoru
+    // secmek; S/E ile baslangic dogrudan dosyaya uygulanir.
+    if (R.duzenle && !R.aktif) {
+      R.aktifHandle = h; doc.bas.aktifHandle = h;
+      dxfCiz(doc);
+      bildir(`#${h} secildi — imleci istedigin yere getirip S ya da E'ye bas.`);
+      return;
+    }
+    dxfRaporSec(doc, h, false);
+  };
   // Tiklama hicbir vektore denk gelmediyse sessiz kalma; kullaniciya soyle.
   R.onMiss = () => bildir("Tiklama bir vektore denk gelmedi — konturun uzerine "
     + "ya da parcanin icine tiklayin (tekerlekle yaklasabilirsiniz).", true);
@@ -655,9 +729,18 @@ async function dxfRaporIndir(doc) {
   const atlandi = r.atlanan ? ` <span class="uyari">(${r.atlanan} secim eslesmedi)</span>` : "";
   if (dr) dr.innerHTML = `<span class="ok">Rapor hazir (${r.oge_sayisi} oge):</span> ${r.cikti}${atlandi}`
     + `<br><span class="kk2">Rapor icerigi: orijinal baslangic + algoritma sonucu `
-    + `+ senin isaretledigin dogru nokta</span>`;
+    + `+ senin isaretledigin dogru nokta</span>`
+    + (r.indir_dxf ? `<br><span class="ok">Duzeltilmis DXF:</span> ${r.dxf_cikti}`
+        + ` <span class="kk2">(${r.duzeltme_sayisi} baslangic uygulandi)</span>` : "");
   bildir(`Hata raporu indiriliyor (${r.oge_sayisi} oge).`);
   indir(r.indir);
+  // Isaretlenen dogru baslangiclar uygulanmis DXF de insin.
+  if (r.indir_dxf) setTimeout(() => indir(r.indir_dxf), 700);
+  if (r.uygulanan) {
+    const d = aktifDoc();
+    if (d) { d.bas = d.bas || {aktif:false, aktifHandle:null, sayac:0};
+      d.bas.sayac = r.duzeltme_sayisi || 0; dxfBasSayacTazele(d); }
+  }
 }
 
 // Indirmeyi sayfadan ayrilmadan tetikler. (window.location.href kullanmak
@@ -1920,7 +2003,7 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   const T = fitDonusum(tumBbox([tum]), W, H, 26);
   izgara(svg, W, H);
   const rs = new Set(riskliHandlelar || []);
-  const rapAktif = rapor && rapor.aktif;
+  const rapAktif = rapor && (rapor.aktif || rapor.duzenle);
   // En distaki (tabaka olcusu) kontur: secilemez; svg'de sakla ki isabet
   // testi (dxfSecimAdayi) onu adaylardan cikarsin.
   const disH = rapAktif ? enDisVektor(varliklar) : null;
@@ -1930,7 +2013,8 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   varliklar.forEach(v => {
     const riskli = rs.has(v.handle);
     const bozuk = sapan.has(v.handle);
-    const secili = rapAktif && rapor.secim.has(v.handle);
+    const secili = rapAktif && (rapor.secim.has(v.handle)
+      || (rapor.duzenle && !rapor.aktif && rapor.aktifHandle === v.handle));
     const dis = rapAktif && v.handle === disH;   // secilemeyen dis sinir
     const vurgu = secili || riskli || bozuk;
     const attr = { d: komutYol(v.d, T, v.kapali), fill:"none",
@@ -2021,11 +2105,24 @@ function cizVarliklar(svgId, varliklar, riskliHandlelar, basGoster, rapor){
   zoomEtkinlestir(svg);
 }
 
+// S/E ile secilen noktayi ISLER. Iki mod:
+//   * HATA BILDIR acik  -> yalnizca ISARETLENIR (rapordaki 'dogru_baslangic');
+//     dosyaya rapor indirilirken uygulanir. Boylece rapor algoritmanin
+//     ciktisini dogru tasimaya devam eder.
+//   * BASLANGIC DUZENLE -> dogrudan DOSYAYA uygulanir (kaydettiginde iner).
+function dxfBaslangicIsle(R, nokta, yeniNode, mesaj) {
+  if (R.aktif) { R.onMark(R.aktifHandle, nokta, yeniNode); bildir(mesaj); return; }
+  const doc = aktifDoc(); if (!doc) return;
+  dxfBaslangicUygula(doc, R.aktifHandle, nokta, yeniNode)
+    .then(ok => { if (ok) dxfCiz(doc); });
+}
+
 // Hata-bildir modunda: SONRASI onizleme uzerine gelinmisken S tusuna basinca
 // AKTIF (sari) vektorun baslangicini imlece EN YAKIN kontur noktasina ata.
 function dxfSKisayol(){
   const svg = document.getElementById("svgSonra");
-  if (!svg || !svg._hover || !svg._rapor || !svg._rapor.aktif) return false;
+  if (!svg || !svg._hover || !svg._rapor) return false;
+  if (!(svg._rapor.aktif || svg._rapor.duzenle)) return false;
   const R = svg._rapor;
   if (R.aktifHandle == null) { bildir("Once bir vektor secin (uzerine tiklayin).", true); return true; }
   const av = (svg._varliklar || []).find(x => x.handle === R.aktifHandle);
@@ -2034,8 +2131,8 @@ function dxfSKisayol(){
   let en = null, ed = 1e18;
   komutKoords(av.d).forEach(pt => { const [sx,sy]=svg._T(pt[0],pt[1]);
     const dd=(sx-mx)**2+(sy-my)**2; if (dd<ed){ed=dd;en=pt;} });
-  if (en) { R.onMark(R.aktifHandle, [en[0], en[1]]);
-    bildir(`Baslangic isaretlendi: (${en[0].toFixed(1)}, ${en[1].toFixed(1)})`); }
+  if (en) dxfBaslangicIsle(R, [en[0], en[1]], false,
+    `Baslangic isaretlendi: (${en[0].toFixed(1)}, ${en[1].toFixed(1)})`);
   return true;
 }
 // Imlecin (mx,my piksel) AKTIF konturun uzerine EN YAKIN projeksiyonu (veri
@@ -2059,15 +2156,16 @@ function konturaProjekte(av, mx, my, T){
 // (varsa) bu yeni baslangic yerini alir.
 function dxfEKisayol(){
   const svg = document.getElementById("svgSonra");
-  if (!svg || !svg._hover || !svg._rapor || !svg._rapor.aktif) return false;
+  if (!svg || !svg._hover || !svg._rapor) return false;
+  if (!(svg._rapor.aktif || svg._rapor.duzenle)) return false;
   const R = svg._rapor;
   if (R.aktifHandle == null) { bildir("Once bir vektor secin (uzerine tiklayin).", true); return true; }
   const av = (svg._varliklar || []).find(x => x.handle === R.aktifHandle);
   if (!av || !svg._mouse) return true;
   const [mx,my] = ekranToTuval(svg, svg._mouse[0], svg._mouse[1]);
   const nokta = konturaProjekte(av, mx, my, svg._T);
-  if (nokta) { R.onMark(R.aktifHandle, nokta, true);
-    bildir(`Yeni node: (${nokta[0].toFixed(1)}, ${nokta[1].toFixed(1)})`); }
+  if (nokta) dxfBaslangicIsle(R, nokta, true,
+    `Yeni node: (${nokta[0].toFixed(1)}, ${nokta[1].toFixed(1)})`);
   return true;
 }
 // F: aktif dosyanin onizleme kartini tam ekran ac/kapat (toggle).
