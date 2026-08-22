@@ -791,6 +791,8 @@ function gcodeIcerik(doc) {
         <button class="dugme hayalet kucuk" data-mod="sol-alt">Auto (sol-alt→sag-ust)</button>
         <button class="dugme hayalet kucuk" data-mod="serpantin">Serpantin</button>
         <button class="dugme hayalet kucuk" data-mod="engel">Engel-farkindalik</button>
+        <button class="dugme hayalet kucuk" data-mod="bolge"
+          title="Bir yatay sirayi (bolge) BITIRMEDEN digerine gecme. Geri donusu engeller; destek denetimi maliyetini asagida gorursun.">Bolge (sira bitmeden cikma)</button>
         <button class="dugme hayalet kucuk" id="g_orijinal" title="Algoritmayi kullanma: dosyadaki orijinal sirayi geri getir">Orijinal sira</button>
         <label class="anahtar" title="Kapaliyken dosya acilirken siralama algoritmasi HIC calistirilmaz; diger tum ozellikler yine kullanilir">
           <input type="checkbox" id="g_oto" ${AYAR.al("gcOtomatik", true)?"checked":""}>
@@ -1180,7 +1182,8 @@ function gcInfoCiz(doc) {
 function gcKarsilastirCiz(doc) {
   const kap = $("g_karsilastir"); if (!kap) return;
   const k = doc.veri.karsilastir; if (!k || !k.modlar) { kap.innerHTML = ""; return; }
-  const adlar = { "sol-alt": "Sol-alt→sağ-üst", "serpantin": "Serpantin", "engel": "Engel" };
+  const adlar = { "sol-alt": "Sol-alt→sağ-üst", "serpantin": "Serpantin",
+                  "engel": "Engel", "bolge": "Bölge" };
   const birim = k.birim || "";
   kap.innerHTML = `<div class="cip">Boşta yol (kısa = iyi)</div>` +
     Object.keys(k.modlar).map(m =>

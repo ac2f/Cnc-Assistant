@@ -364,3 +364,47 @@ def test_kusatma_alan_orani_benzer_boyutlari_eler():
 
     # esigin kendisi makul bir aralikta olmali
     assert 0.0 < KUSATMA_ALAN_ORANI < 1.0
+
+
+def test_bolge_modu_geri_donusu_engeller():
+    """'bolge' modu: bir yatay sirayi bitirmeden digerine gecilmemeli.
+    Y merkezinde 'bir ust banda cikip sonra geri inme' olmamali."""
+    from cnc_assistant.gcode import sirala, blok_bbox
+    bloklar = []
+    for r in range(4):                       # 4 sira
+        for c in range(4):                   # her sirada 4 parca
+            x0, y0 = c * 300, r * 300
+            bloklar.append(_kare_blok(x0, y0, x0 + 100, y0 + 100))
+    srt = sirala(bloklar, "bolge")
+    cy = [(blok_bbox(b)[1] + blok_bbox(b)[3]) / 2 for b in srt]
+    zirve, geri = -1e9, 0
+    for y in cy:
+        if y < zirve - 150:
+            geri += 1
+        zirve = max(zirve, y)
+    assert geri == 0, f"bolge modunda {geri} geri donus var"
+    # her bant kesintisiz: ayni banda ait bloklar bitisik olmali
+    bant = [int(y // 300) for y in cy]
+    assert bant == sorted(bant)
+
+
+def test_bolge_modu_icermeyi_korur():
+    """Bant disi calissa da IC kesim DAIMA kendi dis konturundan once."""
+    from cnc_assistant.gcode import sirala, blok_bbox
+    dis = _kare_blok(0, 0, 200, 200)
+    ic = _kare_blok(80, 80, 120, 120)
+    uzak = _kare_blok(0, 900, 100, 1000)
+    srt = sirala([dis, ic, uzak], "bolge")
+    kutular = [blok_bbox(b) for b in srt]
+    assert kutular.index((80.0, 80.0, 120.0, 120.0)) < \
+           kutular.index((0.0, 0.0, 200.0, 200.0))
+
+
+def test_karsilastir_bolge_modunu_da_olcer():
+    yol = _yaz(ORNEK)
+    try:
+        k = gcode.GCodeProgram(yol).karsilastir()
+        assert "bolge" in k["modlar"]
+        assert k["en_iyi"] in k["modlar"]
+    finally:
+        os.remove(yol)

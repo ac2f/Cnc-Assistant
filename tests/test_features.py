@@ -47,7 +47,7 @@ def test_karsilastir_en_iyi_secer():
     try:
         prog = GC.GCodeProgram(p)
         k = prog.karsilastir()
-        assert set(k["modlar"]) == {"sol-alt", "serpantin", "engel"}
+        assert set(k["modlar"]) == {"sol-alt", "serpantin", "engel", "bolge"}
         assert k["en_iyi"] in k["modlar"]
         assert k["birim"] == "mm"
         # en_iyi gercekten en dusuk olmali

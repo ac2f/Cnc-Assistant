@@ -832,6 +832,45 @@ def serpantin_sirala(bloklar):
     return sonuc
 
 
+# "bolge" modunda bant yuksekligi: parcalarin MEDYAN yuksekliginin kati.
+# Olcuye gore uyarlanir; sabit bir mm degeri her ise uymaz.
+BOLGE_BANT_KATI = 1.5
+
+
+def bolge_bant_yuksekligi(bloklar, kat=BOLGE_BANT_KATI):
+    yuk = sorted(blok_bbox(b)[3] - blok_bbox(b)[1] for b in bloklar)
+    if not yuk:
+        return 1.0
+    med = yuk[len(yuk) // 2]
+    return max(med * kat, 1e-6)
+
+
+def bolge_sirala(bloklar, kat=BOLGE_BANT_KATI):
+    """BOLGE-TUTARLI siralama: bir yatay sira (bant) BITMEDEN baska banda
+    gecilmez. Bantlar alttan uste islenir; HER BANDIN ICINDE normal
+    guvenlik-optimal siralama (sol-alt) calisir.
+
+    Neden: kuresel eniyileme bazen ust banda cikip geri donuyor -- ayni
+    bolgeye birkac kez girip cikmak operator icin kotu. Bantlar Y'de AYRIK
+    oldugundan bu siralama geri donusu YAPISAL olarak engeller.
+
+    ODUNLESIM (olcumlendi, gercek islerde): bolge tutarliligi ile SAG/UST
+    destek kurali dogrudan CATISIR. Bant sinirini zorlamak destek
+    ihlallerini artirir. Bu yuzden 'bolge' VARSAYILAN DEGILDIR; secildiginde
+    destek denetimi maliyeti arayuzde aninda gorunur."""
+    if not bloklar:
+        return []
+    h = bolge_bant_yuksekligi(bloklar, kat)
+    grup = {}
+    for b in bloklar:
+        kutu = blok_bbox(b)
+        grup.setdefault(int(((kutu[1] + kutu[3]) / 2.0) // h), []).append(b)
+    sonuc = []
+    for k in sorted(grup):
+        sonuc.extend(sirala(grup[k], "sol-alt"))     # bant ICINDE guvenlik-optimal
+    return sonuc
+
+
 def _strateji_uygula(bloklar, mod):
     if mod == "serpantin":
         return serpantin_sirala(bloklar)
@@ -874,6 +913,8 @@ def sirala(bloklar, mod="sol-alt"):
     n = len(bloklar)
     if n == 0:
         return []
+    if mod == "bolge":                     # bant disi; bant ICINDE sol-alt
+        return bolge_sirala(bloklar)
     ebeveyn = _direkt_ebeveyn(bloklar)
 
     # VARSAYILAN (sol-alt): destek + ic-ice + POLIGON-ICERME kisitlarini TEK
@@ -1254,7 +1295,7 @@ class GCodeProgram:
         """Her siralama modunun toplam BOSTA (kesim disi) tasima mesafesini
         hesaplar ve en dusuk olani onerir. Mevcut sirayi bozmaz."""
         sonuc = {}
-        for mod in ("sol-alt", "serpantin", "engel"):
+        for mod in ("sol-alt", "serpantin", "engel", "bolge"):
             sirali = sirala(self.bloklar, mod)
             if self.sabit_son:
                 sirali = sirali + [self.sabit_son]
