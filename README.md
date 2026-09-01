@@ -31,6 +31,38 @@ Uc isi bir arada yapar:
 
 ## Kurulum
 
+### Windows — tek tikla kurulum (onerilir)
+
+`windows\Kur.bat` dosyasina **cift tiklayin**. Yonetici yetkisi gerekmez.
+
+Kurulum:
+
+* Python'u bulur, yoksa kurmayi teklif eder (`winget`)
+* `%LOCALAPPDATA%\CncAssistant\venv` altinda ozel bir ortam olusturur —
+  sistemdeki Python'a karismaz
+* Programi ve bagimliliklarini oraya yukler
+* Sunucuyu **Windows acilisina** ekler (arka planda, pencere acmadan)
+* Masaustune ve Baslat menusune `CNC-Assistant` kisayolu koyar
+* Kurulum biter bitmez tarayiciyi `http://127.0.0.1:8000` adresinde acar
+
+Gunluk kullanim: bilgisayar acildiginda sunucu kendiliginden calisir,
+masaustundeki kisayol yalnizca tarayiciyi acar.
+
+| Dosya                | Ne yapar                                        |
+| -------------------- | ----------------------------------------------- |
+| `windows\Kur.bat`    | Tek tik kurulum + otomatik baslatma             |
+| `windows\Baslat.bat` | Sunucuyu elle baslatir ve tarayiciyi acar       |
+| `windows\Kaldir.bat` | Otomatik baslatmayi ve kisayollari kaldirir     |
+
+Ayrintili aciklama ve sik sorulanlar: `windows\BENIOKU.txt`.
+
+**Ikinci kopya acilmaz.** Sunucu her baslatildiginda once `\surum` ucundan
+kendi ornegimizin zaten calisip calismadigina bakar; calisiyorsa yenisini
+acmak yerine mevcut adresi doner. 8000 portu baska bir program tarafindan
+tutuluyorsa cokmez, 8001, 8002... diye ilk bos portu bulur.
+
+### Elle kurulum (her platform)
+
 ```bash
 # Zorunlu
 pip install ezdxf
@@ -386,7 +418,13 @@ Cnc-Assistant/
 │   ├── project.py              # proje dizin yapisi + klasor toplu isleme
 │   ├── webapp.py               # bagimliliksiz web sunucusu (http.server)
 │   ├── web/                    # arayuz (index.html + app.js)
+│   ├── rapor.py                # hata raporu uretimi (sema v2)
 │   └── cli.py                  # argparse komut satiri
+├── windows/                    # tek tik kurulum + otomatik baslatma
+│   ├── Kur.bat
+│   ├── Baslat.bat
+│   ├── Kaldir.bat
+│   └── BENIOKU.txt
 ├── tests/                      # birim testleri
 ├── examples/ornek_uret.py      # demo DXF/G-Code uretici
 ├── requirements.txt

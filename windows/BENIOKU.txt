@@ -1,0 +1,58 @@
+CNC-Assistant - Windows kurulumu
+================================
+
+TEK TIK KURULUM
+---------------
+  Kur.bat  dosyasina CIFT TIKLAYIN.
+
+  Kurulum sirasinda:
+    * Python yoksa kurmayi teklif eder (isterseniz elle de kurabilirsiniz)
+    * Program kendi ozel ortamina kurulur, sisteminizdeki Python'a karismaz
+    * Windows acilisina eklenir (arka planda, pencere acmadan calisir)
+    * Masaustune "CNC-Assistant" kisayolu koyar
+    * Kurulum biter bitmez tarayiciyi acar
+
+  YONETICI YETKISI GEREKMEZ.
+
+
+GUNLUK KULLANIM
+---------------
+  Bilgisayari her actiginizda sunucu arka planda kendiliginden baslar.
+  Arayuzu acmak icin masaustundeki "CNC-Assistant" kisayoluna tiklayin
+  ya da tarayicida su adrese gidin:
+
+      http://127.0.0.1:8000
+
+  Kisayola tiklamak sunucu kapaliysa once onu baslatir. Ikinci bir kopya
+  ASLA acilmaz.
+
+
+DOSYALAR
+--------
+  Kur.bat      Tek tik kurulum (+ otomatik baslatma)
+  Baslat.bat   Sunucuyu elle baslatir ve tarayiciyi acar
+  Kaldir.bat   Otomatik baslatmayi ve kisayollari kaldirir
+
+
+SIK SORULANLAR
+--------------
+  * "8000 portu baska bir program tarafindan kullaniliyor"
+      Program kendiliginden 8001, 8002... diye bos bir port bulur.
+      Adres cubugunda hangi portta acildigini gorursunuz. Kisayolu
+      guncellemek isterseniz Kur.bat'i tekrar calistirin.
+
+  * "Otomatik baslamasini istemiyorum"
+      Kaldir.bat calistirin, ortami silmeyi reddedin (H). Program kurulu
+      kalir; Baslat.bat ile elle acarsiniz.
+
+  * "Windows Defender / SmartScreen uyari veriyor"
+      Bat dosyalari imzali olmadigi icin normaldir. "Daha fazla bilgi" ->
+      "Yine de calistir" deyin. Dosyalarin icerigini metin duzenleyiciyle
+      okuyabilirsiniz; sadece Python kurar ve kisayol olusturur.
+
+  * "Guncelleme nasil yapilir?"
+      Yeni surumu indirip Kur.bat'i tekrar calistirin. Mevcut ortam
+      uzerine yazilir, ayarlariniz korunur.
+
+  * Kesim dosyalariniza ve urettiginiz ciktilara hicbir asamada
+    dokunulmaz; kaldirma islemi de onlari silmez.

@@ -28,6 +28,7 @@ import tempfile
 import threading
 import traceback
 import urllib.parse
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -1020,6 +1021,9 @@ class Isleyici(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if yol == "/surum":            # tek-ornek tespiti (bkz. calistir)
+            self._gonder(200, json.dumps({"uygulama": SURUM_IZI}))
+            return
         if yol == "/indir":
             self._indir()
             return
@@ -1078,9 +1082,51 @@ class Isleyici(BaseHTTPRequestHandler):
         self._gonder(200, govde)
 
 
-def calistir(port=8000, ac=False, host="127.0.0.1"):
-    sunucu = ThreadingHTTPServer((host, port), Isleyici)
-    url = f"http://{host}:{port}"
+SURUM_IZI = "cnc-assistant"          # kendi ornegimizi taniyan imza
+
+
+def _bizim_mi(host, port, zaman=0.6):
+    """Verilen portta ZATEN bizim sunucumuz mu calisiyor?"""
+    try:
+        with urllib.request.urlopen(
+                f"http://{host}:{port}/surum", timeout=zaman) as y:
+            return json.loads(y.read().decode("utf-8")).get("uygulama") == SURUM_IZI
+    except Exception:
+        return False
+
+
+def calistir(port=8000, ac=False, host="127.0.0.1", port_ara=20):
+    """Web arayuzunu baslatir.
+
+    Windows'ta oturum acilisinda otomatik calistigi icin iki sey onemli:
+      * TEK ORNEK: port zaten BIZIM sunucumuzdaysa ikinci kopya acilmaz;
+        (istenmisse) yalnizca tarayici acilir. Boylece her acilista bir
+        surü kopya birikmez.
+      * PORT DOLUYSA COKME: baska bir program portu tutuyorsa sirayla
+        sonraki portlar denenir; hicbiri bos degilse anlasilir hata verir.
+    """
+    if _bizim_mi(host, port):
+        url = f"http://{host}:{port}"
+        print(f"CNC-Assistant zaten calisiyor: {url}")
+        if ac:
+            webbrowser.open(url)
+        return url
+
+    sunucu = son_hata = None
+    secilen = port
+    for p in range(port, port + max(1, port_ara)):
+        try:
+            sunucu = ThreadingHTTPServer((host, p), Isleyici)
+            secilen = p
+            break
+        except OSError as e:                       # port dolu / izin yok
+            son_hata = e
+    if sunucu is None:
+        raise SystemExit(
+            f"Web arayuzu baslatilamadi: {port}-{port + port_ara - 1} "
+            f"araligindaki portlarin hepsi dolu ({son_hata}).")
+
+    url = f"http://{host}:{secilen}"
     print("=" * 62)
     print(f"CNC-Assistant web arayuzu hazir:  {url}")
     print("Tarayicinizda yukaridaki adresi acin.  Durdurmak icin Ctrl+C")
